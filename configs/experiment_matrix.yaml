@@ -1,0 +1,16 @@
+experiment:
+  name: baseline-comparison
+  repetitions: 1
+  seeds: [100]
+variants:
+  - name: translation-only
+    config: translate_only.yaml
+  - name: sparse-repair
+    config: sparse_repair.yaml
+  - name: iterative-reconstruction
+    config: iterative_reconstruction.yaml
+  - name: rolling-context
+    config: rolling_context.yaml
+  - name: inferred-memory
+    config: inferred_memory.yaml
+

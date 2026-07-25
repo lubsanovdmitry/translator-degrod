@@ -1,0 +1,40 @@
+run:
+  name: sparse_repair
+  seed: 1080
+  source_language: ru
+  target_language: ru
+  output_root: runs
+input: {path: ../input.txt, encoding: utf-8}
+chunking:
+  strategy: target_chars
+  target_chars: 1100
+  max_chars: 1800
+  paragraph_overlap: 1
+translation:
+  provider: mock
+  route_mode: mutating_fixed
+  languages: [ru, ka, ar, ja, de, en, ru]
+  mutations: 1
+  min_hops: 5
+  max_hops: 8
+generation:
+  provider: mock
+  model: mock
+  temperature: {repair: 0.3, reconstruction: 0.7, memory_extraction: 0.1}
+context: {enabled: false}
+memory: {enabled: false}
+pipeline:
+  - type: translation_cycle
+    hops: {min: 5, max: 8}
+  - type: conservative_repair
+    probability: 0.35
+  - type: translation_cycle
+    hops: {min: 4, max: 7}
+  - type: final_translation
+runtime:
+  concurrency: 1
+  retries: 4
+  retry_backoff_seconds: 0.01
+  resume: true
+  failure_policy: stop
+

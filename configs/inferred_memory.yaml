@@ -1,0 +1,44 @@
+run:
+  name: inferred_memory
+  seed: 1080
+  source_language: ru
+  target_language: ru
+  output_root: runs
+input: {path: ../input.txt, encoding: utf-8}
+chunking:
+  strategy: target_chars
+  target_chars: 900
+  max_chars: 1800
+  paragraph_overlap: 1
+translation:
+  provider: mock
+  route_mode: stratified
+  min_hops: 5
+  max_hops: 8
+generation:
+  provider: mock
+  model: mock
+  temperature: {repair: 0.3, reconstruction: 0.8, memory_extraction: 0.1}
+context:
+  enabled: true
+  previous_chunks: 2
+  max_chars: 3500
+  truncation: tail
+memory:
+  enabled: true
+  half_life_chunks: 20
+  minimum_count: 2
+  maximum_items_in_prompt: 8
+pipeline:
+  - type: translation_cycle
+    hops: {min: 5, max: 8}
+  - type: contextual_reconstruction
+  - type: memory_extraction
+  - type: final_translation
+runtime:
+  concurrency: 1
+  retries: 4
+  retry_backoff_seconds: 0.01
+  resume: true
+  failure_policy: stop
+

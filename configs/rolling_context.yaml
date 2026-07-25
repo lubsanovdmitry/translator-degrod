@@ -1,0 +1,47 @@
+run:
+  name: rolling_context
+  seed: 1080
+  source_language: ru
+  target_language: ru
+  output_root: runs
+input: {path: ../input.txt, encoding: utf-8}
+chunking:
+  strategy: target_chars
+  target_chars: 900
+  max_chars: 1800
+  paragraph_overlap: 1
+translation:
+  provider: mock
+  route_mode: stratified
+  min_hops: 5
+  max_hops: 8
+  hub_language: en
+generation:
+  provider: mock
+  model: mock
+  temperature: {repair: 0.3, reconstruction: 0.8, memory_extraction: 0.1}
+context:
+  enabled: true
+  previous_chunks: 2
+  max_chars: 3500
+  truncation: tail
+  source: final_generated_text
+  include_intermediate: false
+memory: {enabled: false}
+pipeline:
+  - type: translation_cycle
+    hops: {min: 5, max: 8}
+  - type: conservative_repair
+    probability: 0.25
+  - type: translation_cycle
+    hops: {min: 4, max: 7}
+  - type: contextual_reconstruction
+    probability: 0.7
+  - type: final_translation
+runtime:
+  concurrency: 1
+  retries: 4
+  retry_backoff_seconds: 0.01
+  resume: true
+  failure_policy: stop
+
