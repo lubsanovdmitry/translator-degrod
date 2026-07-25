@@ -85,3 +85,40 @@ variants:
 
     with pytest.raises(ConfigError, match="experiment.concurrency"):
         asyncio.run(run_matrix(matrix_path))
+
+
+def test_invalid_matrix_baseline_is_rejected_before_jobs_start(
+    config_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    matrix_path = config_file.parent / "invalid-baseline.yaml"
+    matrix_path.write_text(
+        f"""experiment:
+  name: invalid-baseline
+  baseline: missing
+variants:
+  - name: configured
+    config: {config_file}
+""",
+        encoding="utf-8",
+    )
+    called = False
+
+    async def forbidden_run_pipeline(
+        config: RunConfig,
+        *,
+        run_directory: Path | None = None,
+    ) -> Path:
+        del config, run_directory
+        nonlocal called
+        called = True
+        raise AssertionError("matrix job started before baseline validation")
+
+    monkeypatch.setattr(
+        "semantic_telephone.experiments.run_pipeline",
+        forbidden_run_pipeline,
+    )
+
+    with pytest.raises(ConfigError, match="experiment.baseline"):
+        asyncio.run(run_matrix(matrix_path))
+    assert called is False

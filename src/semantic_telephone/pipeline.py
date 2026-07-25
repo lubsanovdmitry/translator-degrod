@@ -153,11 +153,13 @@ async def run_pipeline(config: RunConfig, *, run_directory: Path | None = None) 
             "start a new run so memory payloads can be checkpointed"
         )
     prompts, prompt_checksums = load_prompts(config)
-    semantic_metrics = (
-        await asyncio.to_thread(prepare_semantic_metrics, config.metrics.semantic)
-        if config.metrics.semantic.enabled
-        else None
-    )
+    if existing_manifest is not None:
+        stored_prompt_checksums = existing_manifest.get("prompt_checksums")
+        if stored_prompt_checksums != prompt_checksums:
+            raise RuntimeError(
+                "cannot resume because prompt checksums changed; "
+                "restore the original prompts or start a new run"
+            )
     atomic_write_text(run_directory / "source.txt", source)
     atomic_write_yaml(run_directory / "resolved_config.yaml", config.to_dict())
     if existing_manifest is not None:
@@ -179,54 +181,69 @@ async def run_pipeline(config: RunConfig, *, run_directory: Path | None = None) 
     atomic_write_json(manifest_path, manifest)
 
     request_controller = RequestController(config.runtime, run_directory / "events.jsonl")
-    translator = (
-        translation_provider(config.translation, request_controller=request_controller)
-        if "request_controller" in inspect.signature(translation_provider).parameters
-        else translation_provider(config.translation)
-    )
-    generators: dict[str, Any] = {}
-    generation_stage_types = {
-        StageType.CONSERVATIVE_REPAIR,
-        StageType.RECONSTRUCTION,
-        StageType.CONTEXTUAL_RECONSTRUCTION,
-        StageType.MEMORY_EXTRACTION,
-    }
-    for stage_type in {
-        stage.type for stage in config.pipeline if stage.enabled
-    } & generation_stage_types:
-        generators[stage_type.value] = generation_provider(
-            config.generation,
-            task=stage_type.value,
+    try:
+        semantic_metrics = (
+            await asyncio.to_thread(prepare_semantic_metrics, config.metrics.semantic)
+            if config.metrics.semantic.enabled
+            else None
+        )
+        translator = (
+            translation_provider(config.translation, request_controller=request_controller)
+            if "request_controller" in inspect.signature(translation_provider).parameters
+            else translation_provider(config.translation)
+        )
+        generators: dict[str, Any] = {}
+        generation_stage_types = {
+            StageType.CONSERVATIVE_REPAIR,
+            StageType.RECONSTRUCTION,
+            StageType.CONTEXTUAL_RECONSTRUCTION,
+            StageType.MEMORY_EXTRACTION,
+        }
+        for stage_type in {
+            stage.type for stage in config.pipeline if stage.enabled
+        } & generation_stage_types:
+            generators[stage_type.value] = generation_provider(
+                config.generation,
+                task=stage_type.value,
+                request_controller=request_controller,
+            )
+        chunks = chunk_text(source, config.chunking)
+        # Rebuild memory causally from stage checkpoints. Loading the final state here
+        # would expose later chunks to earlier reconstruction stages during resume.
+        memory = MemoryStore(
+            run_directory / "memory",
+            half_life=config.memory.half_life_chunks,
+            load_items=False,
+        )
+        previous_contexts: list[str] = []
+        final_values: list[str] = []
+        all_routes: list[list[str]] = []
+        warnings: list[str] = []
+        chunk_concurrency = _effective_chunk_concurrency(config)
+        manifest["effective_chunk_concurrency"] = chunk_concurrency
+        routes_serialized = bool(getattr(translator, "serializes_routes", False))
+        manifest["translation_routes_serialized"] = routes_serialized
+        if routes_serialized:
+            logger.info("serializing translation routes to protect a bounded pair-model cache")
+        if chunk_concurrency < config.runtime.concurrency:
+            dependency = "rolling context" if config.context.enabled else "memory"
+            warnings.append(
+                f"runtime.concurrency reduced to 1 because {dependency} requires chunk order"
+            )
+            logger.info(
+                "using sequential chunk execution because %s is enabled",
+                dependency,
+            )
+        atomic_write_json(manifest_path, manifest)
+    except BaseException as error:
+        _record_run_failure(
+            manifest,
+            manifest_path=manifest_path,
+            run_directory=run_directory,
             request_controller=request_controller,
+            error=error,
         )
-    chunks = chunk_text(source, config.chunking)
-    # Rebuild memory causally from stage checkpoints. Loading the final state here
-    # would expose later chunks to earlier reconstruction stages during resume.
-    memory = MemoryStore(
-        run_directory / "memory",
-        half_life=config.memory.half_life_chunks,
-        load_items=False,
-    )
-    previous_contexts: list[str] = []
-    final_values: list[str] = []
-    all_routes: list[list[str]] = []
-    warnings: list[str] = []
-    chunk_concurrency = _effective_chunk_concurrency(config)
-    manifest["effective_chunk_concurrency"] = chunk_concurrency
-    routes_serialized = bool(getattr(translator, "serializes_routes", False))
-    manifest["translation_routes_serialized"] = routes_serialized
-    if routes_serialized:
-        logger.info("serializing translation routes to protect a bounded pair-model cache")
-    if chunk_concurrency < config.runtime.concurrency:
-        dependency = "rolling context" if config.context.enabled else "memory"
-        warnings.append(
-            f"runtime.concurrency reduced to 1 because {dependency} requires chunk order"
-        )
-        logger.info(
-            "using sequential chunk execution because %s is enabled",
-            dependency,
-        )
-    atomic_write_json(manifest_path, manifest)
+        raise
     try:
         if chunk_concurrency == 1:
             for chunk in chunks:
@@ -317,18 +334,35 @@ async def run_pipeline(config: RunConfig, *, run_directory: Path | None = None) 
         manifest["completed_at"] = datetime.now(UTC).isoformat()
         atomic_write_json(manifest_path, manifest)
     except BaseException as error:
-        manifest["state"] = (
-            "interrupted"
-            if isinstance(error, (KeyboardInterrupt, asyncio.CancelledError))
-            else ("budget_exceeded" if isinstance(error, BudgetExceededError) else "failed")
+        _record_run_failure(
+            manifest,
+            manifest_path=manifest_path,
+            run_directory=run_directory,
+            request_controller=request_controller,
+            error=error,
         )
-        manifest["last_error"] = safe_diagnostic(error)
-        manifest["translation_models"] = _translation_models_manifest(run_directory)
-        manifest["request_summary"] = request_controller.summary()
-        manifest["budget_status"] = request_controller.budget_status()
-        atomic_write_json(manifest_path, manifest)
         raise
     return run_directory
+
+
+def _record_run_failure(
+    manifest: dict[str, Any],
+    *,
+    manifest_path: Path,
+    run_directory: Path,
+    request_controller: RequestController,
+    error: BaseException,
+) -> None:
+    manifest["state"] = (
+        "interrupted"
+        if isinstance(error, (KeyboardInterrupt, asyncio.CancelledError))
+        else ("budget_exceeded" if isinstance(error, BudgetExceededError) else "failed")
+    )
+    manifest["last_error"] = safe_diagnostic(error)
+    manifest["translation_models"] = _translation_models_manifest(run_directory)
+    manifest["request_summary"] = request_controller.summary()
+    manifest["budget_status"] = request_controller.budget_status()
+    atomic_write_json(manifest_path, manifest)
 
 
 def _effective_chunk_concurrency(config: RunConfig) -> int:
@@ -534,7 +568,11 @@ async def _run_stage(
     )
     cached = store.load(stage_number, stage.type.value, stage_checksum)
     if cached:
-        if stage.type is StageType.MEMORY_EXTRACTION:
+        if (
+            stage.type is StageType.MEMORY_EXTRACTION
+            and cached.applied
+            and cached.execution_succeeded
+        ):
             if not cached.memory_payload or not cached.memory_event_id:
                 raise RuntimeError(
                     "memory checkpoint lacks schema-v2 side-effect data; start a new run"

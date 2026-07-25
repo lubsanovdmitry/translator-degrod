@@ -296,6 +296,64 @@ def test_memory_resume_replays_checkpointed_side_effects(config_file: Path) -> N
     assert observations_path.read_text(encoding="utf-8") == observations_before
 
 
+def test_resume_reuses_skipped_memory_checkpoint(config_file: Path) -> None:
+    config = load_config(config_file)
+    config.memory.enabled = True
+    config.context.enabled = False
+    config.pipeline.insert(
+        -1,
+        PipelineStageConfig(type=StageType.MEMORY_EXTRACTION, probability=0.0),
+    )
+    directory = asyncio.run(run_pipeline(config))
+    expected = (directory / "final.txt").read_text(encoding="utf-8")
+    memory_stage = next((directory / "chunks").glob("*/stage-03-memory-extraction.json"))
+    assert read_json(memory_stage)["applied"] is False
+
+    asyncio.run(run_pipeline(config, run_directory=directory))
+
+    assert (directory / "final.txt").read_text(encoding="utf-8") == expected
+    assert read_json(directory / "manifest.json")["state"] == "completed"
+
+
+def test_resume_rejects_prompt_checksum_drift(config_file: Path) -> None:
+    prompt_path = config_file.parent / "reconstruction.txt"
+    prompt_path.write_text("Keep the damaged text restrained.", encoding="utf-8")
+    config = load_config(config_file)
+    config.custom_prompts["reconstruction"] = str(prompt_path)
+    directory = asyncio.run(run_pipeline(config))
+    manifest_path = directory / "manifest.json"
+    manifest_before = read_json(manifest_path)
+    final_before = (directory / "final.txt").read_text(encoding="utf-8")
+
+    prompt_path.write_text("A changed reconstruction instruction.", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="prompt checksums changed"):
+        asyncio.run(run_pipeline(config, run_directory=directory))
+
+    assert read_json(manifest_path) == manifest_before
+    assert (directory / "final.txt").read_text(encoding="utf-8") == final_before
+
+
+def test_provider_setup_failure_marks_manifest_failed(
+    config_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_key = "SEMANTIC_TELEPHONE_TEST_MISSING_KEY"
+    monkeypatch.delenv(missing_key, raising=False)
+    config = load_config(config_file)
+    config.generation.provider = "openrouter"
+    config.generation.api_key_env = missing_key
+    config.generation.model = "vendor/test-model"
+    config.pipeline = [PipelineStageConfig(type=StageType.RECONSTRUCTION)]
+
+    with pytest.raises(ValueError, match=missing_key):
+        asyncio.run(run_pipeline(config))
+
+    run_directory = next((config_file.parent / "runs").iterdir())
+    manifest = read_json(run_directory / "manifest.json")
+    assert manifest["state"] == "failed"
+    assert missing_key in manifest["last_error"]
+
+
 def test_schema_v1_memory_resume_is_rejected(config_file: Path) -> None:
     config = load_config(config_file)
     config.memory.enabled = True

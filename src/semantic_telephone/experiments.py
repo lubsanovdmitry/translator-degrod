@@ -73,14 +73,14 @@ async def run_matrix(path: Path) -> Path:
                 / f"{job_number:04d}-{_slug(variant_name)}-{repetition + 1}"
             )
             jobs.append((variant_name, repetition + 1, seed, config, run_directory))
+    baseline = str(experiment.get("baseline", variant_names[0] if variant_names else ""))
+    if baseline not in variant_names:
+        raise ConfigError("'experiment.baseline' must name a configured variant")
     rows = await _run_matrix_jobs(
         jobs,
         concurrency=concurrency,
         failure_policy=failure_policy,
     )
-    baseline = str(experiment.get("baseline", variant_names[0] if variant_names else ""))
-    if baseline not in variant_names:
-        raise ConfigError("'experiment.baseline' must name a configured variant")
     aggregates = _aggregate_rows(rows)
     paired = _paired_deltas(rows, baseline=baseline)
     atomic_write_json(
