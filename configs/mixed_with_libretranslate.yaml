@@ -1,0 +1,59 @@
+run:
+  name: mixed_with_libretranslate
+  seed: 1080
+  source_language: ru
+  target_language: ru
+  output_root: runs
+input: {path: ../input.txt, encoding: utf-8}
+chunking: {strategy: target_chars, target_chars: 900, max_chars: 1800}
+translation:
+  default_provider: nllb
+  route_mode: fixed
+  languages: [ru, ka, en, de, tr, en, ru]
+  providers:
+    nllb:
+      type: nllb
+      model: facebook/nllb-200-distilled-600M
+      max_input_tokens: 450
+      decoding: {mode: greedy, num_beams: 1, max_new_tokens: 512, no_repeat_ngram_size: 3}
+    m2m100:
+      type: m2m100
+      model: facebook/m2m100_418M
+      max_input_tokens: 450
+      decoding: {mode: greedy, num_beams: 1, max_new_tokens: 512, no_repeat_ngram_size: 3}
+    opus:
+      type: opus_mt
+      decoding: {mode: greedy, num_beams: 1, max_new_tokens: 512, no_repeat_ngram_size: 3}
+      allow_downloads: true
+      configured_pairs_only: true
+      pairs:
+        ru-en: Helsinki-NLP/opus-mt-ru-en
+        en-ru: Helsinki-NLP/opus-mt-en-ru
+        en-de: Helsinki-NLP/opus-mt-en-de
+        de-en: Helsinki-NLP/opus-mt-de-en
+    libretranslate:
+      type: libretranslate
+      base_url: http://localhost:5000
+      retries: 3
+      retry_backoff_seconds: 0.5
+  engine_routing:
+    mode: weighted_random
+    avoid_same_engine_consecutively: true
+    weights: {nllb: 0.50, m2m100: 0.25, opus: 0.20, libretranslate: 0.05}
+    fallback_order: [nllb, m2m100, opus, libretranslate]
+generation:
+  provider: openrouter
+  api_key_env: OPENROUTER_API_KEY
+  parameters:
+    reasoning: {enabled: false}
+  tasks:
+    reconstruction: {max_tokens: 4096}
+    report_generation: {max_tokens: 2048}
+  temperature: {reconstruction: 0.6, report_generation: 0.2}
+context: {enabled: false}
+memory: {enabled: false}
+pipeline:
+  - type: translation_cycle
+  - type: reconstruction
+  - type: final_translation
+runtime: {retries: 4, retry_backoff_seconds: 2, resume: true, failure_policy: stop}

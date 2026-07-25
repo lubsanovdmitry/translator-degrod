@@ -35,3 +35,27 @@ def test_allow_and_deny_lists() -> None:
     )
     route = generate_route(config, source_language="ru", target_language="ru", seed=1)
     assert "fr" not in route
+
+
+def test_deny_list_applies_to_fixed_and_hubbed_routes() -> None:
+    fixed = RouteConfig(
+        mode="fixed",
+        languages=["ru", "de", "fr", "en"],
+        deny=["de"],
+    )
+    fixed_route = generate_route(
+        fixed, source_language="ru", target_language="en", seed=1
+    )
+    assert fixed_route == ["ru", "fr", "en"]
+
+    hubbed = RouteConfig(
+        mode="hubbed",
+        deny=["en"],
+        hub_language="en",
+        min_hops=5,
+        max_hops=5,
+    )
+    hubbed_route = generate_route(
+        hubbed, source_language="ru", target_language="ru", seed=1
+    )
+    assert "en" not in hubbed_route

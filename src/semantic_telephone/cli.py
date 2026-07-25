@@ -32,11 +32,21 @@ def init(directory: Annotated[Path, typer.Argument()] = Path(".")) -> None:
     """Create a minimal mock-only starter workspace without overwriting files."""
     directory.mkdir(parents=True, exist_ok=True)
     files = {
-        ".env": "# Optional API credentials. Mock providers need none.\n",
+        ".env": (
+            "# Optional API credentials. Mock providers need none.\n"
+            "OPENROUTER_API_KEY=\n"
+            "OPENROUTER_BASE_URL=https://openrouter.ai/api/v1\n"
+            "OPENROUTER_MODEL=\n"
+            "LIBRETRANSLATE_BASE_URL=http://localhost:5000\n"
+            "LIBRETRANSLATE_API_KEY=\n"
+        ),
         "input.txt": "",
         "semantic-telephone.yaml": _starter_config(),
         "SEMANTIC_TELEPHONE.md": (
-            "# Quick start\n\n"
+            "# Mock smoke test only\n\n"
+            "This starter checks the CLI and artifact pipeline; it does not perform "
+            "machine translation. For a real run, use the repository's "
+            "`configs/nllb_only.yaml` or `configs/mixed_local.yaml` profile.\n\n"
             "Put text in `input.txt`, then run:\n\n"
             "```bash\nsemantic-telephone validate semantic-telephone.yaml\n"
             "semantic-telephone run semantic-telephone.yaml\n```\n"
@@ -71,7 +81,7 @@ def run(
     _configure_logging(verbose)
     try:
         directory = asyncio.run(run_pipeline(load_config(config)))
-    except (ConfigError, ValueError, OSError) as error:
+    except (ConfigError, ValueError, OSError, RuntimeError) as error:
         typer.echo(f"Run failed: {error}", err=True)
         raise typer.Exit(1) from error
     typer.echo(f"Completed: {directory}")
@@ -88,7 +98,7 @@ def resume(
     config = config_from_resolved(manifest["resolved_config"])
     try:
         directory = asyncio.run(run_pipeline(config, run_directory=run_directory))
-    except (ValueError, OSError) as error:
+    except (ValueError, OSError, RuntimeError) as error:
         typer.echo(f"Resume failed: {error}", err=True)
         raise typer.Exit(1) from error
     typer.echo(f"Completed: {directory}")
@@ -100,7 +110,7 @@ def matrix(config: Annotated[Path, typer.Argument(exists=True, dir_okay=False)])
     _configure_logging()
     try:
         directory = run_matrix_sync(config)
-    except (ConfigError, ValueError, OSError) as error:
+    except (ConfigError, ValueError, OSError, RuntimeError) as error:
         typer.echo(f"Matrix failed: {error}", err=True)
         raise typer.Exit(1) from error
     typer.echo(f"Completed matrix: {directory}")
@@ -164,9 +174,7 @@ def memory_clear(
 ) -> None:
     manifest = read_json(run_directory / "manifest.json")
     config = config_from_resolved(manifest["resolved_config"])
-    MemoryStore(
-        run_directory / "memory", half_life=config.memory.half_life_chunks
-    ).clear()
+    MemoryStore(run_directory / "memory", half_life=config.memory.half_life_chunks).clear()
     typer.echo(f"Cleared inferred memory in {run_directory / 'memory'}")
 
 
@@ -175,7 +183,8 @@ def _cell(value: str) -> str:
 
 
 def _starter_config() -> str:
-    return """run:
+    return """# Smoke test only: mock providers do not perform machine translation.
+run:
   name: translate-only
   seed: 1080
   source_language: ru
@@ -211,4 +220,3 @@ runtime:
 
 if __name__ == "__main__":
     app()
-

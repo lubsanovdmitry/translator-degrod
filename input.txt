@@ -1,19 +1,1531 @@
-На краю площади стояла мастерская часовщика. По утрам Лира открывала ставни,
-записывала погоду в синюю тетрадь и проверяла часы, которые всегда спешили на
-семь минут.
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nuclear Reactor Simulator — PWR Control Room</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+:root {
+  --bg:      #898989;
+  --panel:   #9ea0a3;
+  --card:    #ffffff;
+  --border:  #1e2d40;
+  --dim:     #0c0c0c;
+  --text:    #000000;
+  --green:   #00e676;
+  --yellow:  #ffd600;
+  --red:     #ff1744;
+  --orange:  #ff6d00;
+  --cyan:    #00e5ff;
+  --blue:    #2979ff;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  overflow-x: hidden;
+}
 
-Однажды курьер принёс ей пустую коробку. На крышке было написано: «Передать
-тому, кто услышит реку под мостовой». Лира потрясла коробку и услышала тихий
-металлический звон.
+/* ── Header ── */
+.hdr {
+  background: var(--panel);
+  border-bottom: 2px solid var(--border);
+  padding: 7px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.hdr h1 { font-size: 15px; color: var(--cyan); letter-spacing: 3px; }
+.hdr-right { display: flex; align-items: center; gap: 14px; }
+.ws-badge { font-size: 12px; }
 
-— Это не мой заказ, — сказала она.
-— Теперь ваш, — ответил курьер и ушёл прежде, чем башенные часы закончили бой.
+/* ── SCRAM ── */
+.scram-btn {
+  background: #4a0010;
+  color: var(--red);
+  border: 2px solid var(--red);
+  padding: 8px 22px;
+  font: bold 14px 'Courier New', monospace;
+  letter-spacing: 3px;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: all .1s;
+  box-shadow: 0 0 10px #ff174466;
+}
+.scram-btn:hover { background: #660015; }
+.scram-btn.active {
+  animation: scram-pulse .4s infinite;
+  background: var(--red);
+  color: #fff;
+}
+@keyframes scram-pulse {
+  0%,100% { box-shadow: 0 0 20px var(--red); }
+  50%      { box-shadow: none; background: #660015; }
+}
 
-Вечером Лира встретила архивиста Норда у закрытого фонтана. Они сравнили записи:
-в его каталоге река исчезла тридцать лет назад, а в её тетради дождь шёл только
-по вторникам. Коробка снова зазвенела, когда Норд произнёс слово «мост».
+/* ── Layout ── */
+.wrap { padding: 10px; display: flex; flex-direction: column; gap: 10px; }
+.row  { display: flex; gap: 10px; }
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 12px;
+  flex-shrink: 0;
+}
+.ctitle {
+  color: var(--dim);
+  font-size: 11px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 5px;
+  margin-bottom: 10px;
+}
 
-Они решили открыть старый люк за мастерской. Под ним оказалась лестница, сухая
-и тёплая, хотя снизу доносился шум воды. Лира взяла фонарь, Норд — каталог, и
-они договорились вернуться до полуночи.
+/* ── Power gauge ── */
+.power-card { width: 240px; display: flex; flex-direction: column; align-items: center; }
+.power-pct {
+  font-size: 44px;
+  font-weight: bold;
+  text-align: center;
+  color: var(--green);
+  line-height: 1;
+  margin: 4px 0 2px;
+  transition: color .3s;
+}
+.power-sub { font-size: 11px; color: var(--dim); letter-spacing: 1px; text-align: center; }
+.kv-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 2px;
+  border-bottom: 1px solid #0f1a26;
+  gap: 8px;
+}
+.kv-k { color: var(--dim); font-size: 12px; }
+.kv-v { color: var(--cyan); font-weight: bold; font-size: 12px; }
+
+/* ── Temp thermometers ── */
+.thermo-card { width: 130px; display: flex; flex-direction: column; align-items: center; }
+.thermo-val { font-size: 22px; font-weight: bold; margin-top: 5px; }
+.thermo-lbl { font-size: 11px; color: var(--dim); letter-spacing: 1px; margin-top: 3px; }
+
+/* ── Pressure / flow card ── */
+.pres-card { flex: 1; min-width: 140px; }
+
+/* ── Rod banks ── */
+.rods-card { flex: 1; }
+.rod-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; }
+.rod-col { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.rod-lbl { font-size: 11px; color: var(--dim); letter-spacing: 1px; }
+.rod-pct { font-size: 15px; font-weight: bold; color: var(--cyan); }
+.rod-actual { font-size: 10px; color: var(--dim); height: 14px; }
+.rod-slider {
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 28px;
+  height: 90px;
+  cursor: pointer;
+  accent-color: var(--cyan);
+}
+
+/* ── Pump buttons ── */
+.pumps-card { width: 190px; }
+.pump-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.pump-btn {
+  padding: 10px 6px;
+  border: 2px solid;
+  border-radius: 3px;
+  font: bold 12px 'Courier New', monospace;
+  cursor: pointer;
+  text-align: center;
+  line-height: 1.5;
+  transition: filter .15s;
+}
+.pump-btn:hover { filter: brightness(1.3); }
+.pump-on  { background:#002a10; border-color:var(--green); color:var(--green); }
+.pump-off { background:#2a0008; border-color:var(--red);   color:var(--red);   }
+
+/* ── Diesel/ECCS card ── */
+.dg-card { width: 210px; }
+.dg-row  { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; }
+.dg-lbl  { width: 36px; color: var(--dim); font-size: 12px; }
+.dg-stat {
+  font-size: 12px;
+  padding: 3px 8px;
+  border-radius: 2px;
+  font-weight: bold;
+  min-width: 78px;
+  text-align: center;
+}
+.dg-standby  { background:#1a1a1a; color:var(--dim); }
+.dg-starting { background:#332200; color:var(--yellow); }
+.dg-running  { background:#002a10; color:var(--green); }
+.dg-failed   { background:#2a0008; color:var(--red);   }
+.small-btn {
+  background: #0f1c28;
+  color: var(--cyan);
+  border: 1px solid var(--cyan);
+  padding: 3px 9px;
+  font: 12px 'Courier New', monospace;
+  cursor: pointer;
+  border-radius: 2px;
+}
+.small-btn:hover { background: #163040; }
+
+/* toggles */
+.tog { position: relative; display: inline-block; width: 34px; height: 18px; }
+.tog input { opacity:0; width:0; height:0; }
+.tog-sl {
+  position: absolute; cursor: pointer;
+  top:0;left:0;right:0;bottom:0;
+  background:#222; border-radius:18px; transition:.2s;
+}
+.tog-sl:before {
+  position:absolute; content:'';
+  height:12px; width:12px; left:3px; bottom:3px;
+  background:#666; border-radius:50%; transition:.2s;
+}
+.tog input:checked + .tog-sl { background:#002a10; border:1px solid var(--green); }
+.tog input:checked + .tog-sl:before { transform:translateX(16px); background:var(--green); }
+
+/* text input */
+.tin {
+  background: var(--bg);
+  color: var(--cyan);
+  border: 1px solid var(--border);
+  padding: 3px 6px;
+  font: 12px 'Courier New', monospace;
+  width: 80px;
+  text-align: right;
+  border-radius: 2px;
+}
+.tin:focus { outline:none; border-color:var(--cyan); }
+
+/* ── Alarm grid ── */
+.alarm-card { flex: 1; }
+.alarm-grid { display: grid; grid-template-columns: repeat(5,1fr); gap: 5px; }
+.atile {
+  padding: 7px 4px;
+  text-align: center;
+  font-size: 11px;
+  letter-spacing: .3px;
+  border: 1px solid;
+  border-radius: 2px;
+  transition: all .2s;
+}
+.a-off { background:var(--card); border-color:#1e2d40; color:#2a4058; }
+.a-yellow {
+  background:#2a1a00; border-color:var(--yellow); color:var(--yellow);
+  box-shadow: 0 0 6px #ffd60055;
+  animation: fy 1.2s infinite;
+}
+.a-red {
+  background:#2a0008; border-color:var(--red); color:var(--red);
+  box-shadow: 0 0 8px #ff174455;
+  animation: fr .6s infinite;
+}
+@keyframes fy { 0%,100%{opacity:1} 50%{opacity:.6} }
+@keyframes fr { 0%,100%{opacity:1} 50%{opacity:.45} }
+
+/* ── Charts ── */
+.charts-row { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; }
+.ch-card { }
+.ch-wrap { position:relative; height:185px; }
+
+/* ── Bottom row ── */
+.bot-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+/* scenario */
+.scen-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+.scen-sel {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 6px 8px;
+  font: 12px 'Courier New', monospace;
+  border-radius: 2px;
+  flex: 1;
+}
+.btn-trig {
+  background:#1a1400; color:var(--yellow); border:2px solid var(--yellow);
+  padding:6px 14px; font:12px 'Courier New',monospace; cursor:pointer; border-radius:2px;
+}
+.btn-trig:hover { background:#332800; }
+.btn-reset {
+  background:#00001a; color:var(--blue); border:2px solid var(--blue);
+  padding:6px 14px; font:12px 'Courier New',monospace; cursor:pointer; border-radius:2px;
+}
+.btn-reset:hover { background:#001133; }
+.btn-cold {
+  background:#0a1a0a; color:var(--green); border:2px solid #005522;
+  padding:6px 14px; font:12px 'Courier New',monospace; cursor:pointer; border-radius:2px;
+}
+.btn-cold:hover { background:#0f2a1a; }
+.btn-fullpwr {
+  background:#1a1000; color:var(--orange); border:2px solid var(--orange);
+  padding:6px 14px; font:12px 'Courier New',monospace; cursor:pointer; border-radius:2px;
+}
+.btn-fullpwr:hover { background:#2a2000; }
+.scen-desc { font-size:12px; color:var(--dim); line-height:1.7; }
+
+/* settings */
+.set-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+.set-h { font-size:11px; color:var(--dim); letter-spacing:1.5px; border-bottom:1px solid var(--border); padding-bottom:4px; margin-bottom:8px; }
+.set-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:7px; gap:6px; }
+.set-lbl { font-size:12px; flex:1; }
+
+/* ── Reactivity readout ── */
+.rho-unit { font-size:10px; color:var(--dim); margin-left:2px; }
+
+/* ── Phase 2: Axial Core Map ── */
+.axial-card { min-width: 110px; }
+.axial-map  { display: flex; flex-direction: column; gap: 2px; }
+.axial-row  { display: flex; align-items: center; gap: 3px; cursor: default; }
+.axial-node-lbl {
+  width: 12px; font-size: 10px; color: var(--dim);
+  text-align: right; flex-shrink: 0; line-height: 1;
+}
+.axial-cell {
+  width: 60px; height: 28px; display: flex;
+  border: 1px solid #1e2d40; box-sizing: border-box; overflow: hidden;
+}
+.axial-cell.film-boil { border: 2px solid var(--red); }
+.axial-void-fill { width: 40px; height: 100%; flex-shrink: 0; transition: background .3s; }
+.axial-power-wrap {
+  width: 20px; height: 100%; background: #0f1a26;
+  position: relative; overflow: hidden; flex-shrink: 0;
+}
+.axial-power-bar {
+  height: 100%; background: #4a5a6a;
+  position: absolute; left: 0; top: 0; transition: width .2s;
+}
+.axial-regime {
+  font-size: 10px; margin-top: 6px; letter-spacing: 1px;
+  text-align: center; font-weight: bold;
+}
+
+/* ── Phase 2: DNBR Gauge ── */
+.dnbr-card { min-width: 140px; display: flex; flex-direction: column; align-items: center; }
+@keyframes fuel-damage-pulse {
+  0%,100% { background: #2a0008; }
+  50%      { background: #550010; }
+}
+.fuel-damage { animation: fuel-damage-pulse 1s infinite; }
+</style>
+</head>
+<body>
+
+<!-- ═══ HEADER ═══ -->
+<div class="hdr">
+  <h1>⚛ PWR NUCLEAR REACTOR SIMULATOR</h1>
+  <div class="hdr-right">
+    <span class="ws-badge">WS: <span id="wsLbl" style="color:var(--red)">OFFLINE</span>
+      &nbsp;|&nbsp; T= <span id="simT" style="color:var(--cyan)">0.0s</span></span>
+    <button class="scram-btn" id="scramBtn" onclick="doScram()">⚠ SCRAM ⚠</button>
+    <button class="btn" id="scramResetBtn" onclick="resetScram()" disabled>RESET SCRAM</button>
+  </div>
+</div>
+
+<div class="wrap">
+
+<!-- ═══ ROW 1: METERS ═══ -->
+<div class="row">
+
+  <!-- Power gauge -->
+  <div class="card power-card">
+    <div class="ctitle">REACTOR POWER</div>
+    <svg id="pgSvg" viewBox="0 0 220 165" style="width:220px;height:165px;">
+      <!-- background arc -->
+      <path id="pgBg"  fill="none" stroke="#0f1a26" stroke-width="22" stroke-linecap="round"/>
+      <!-- zone bg arcs -->
+      <path id="pgZG"  fill="none" stroke="#002210" stroke-width="22" stroke-linecap="round"/>
+      <path id="pgZY"  fill="none" stroke="#1a1000" stroke-width="22" stroke-linecap="round"/>
+      <path id="pgZR"  fill="none" stroke="#1a0008" stroke-width="22" stroke-linecap="round"/>
+      <!-- active fill -->
+      <path id="pgFill" fill="none" stroke="var(--green)" stroke-width="17" stroke-linecap="round"/>
+      <!-- needle -->
+      <line id="pgNeedle" x1="110" y1="102" x2="110" y2="30" stroke="#c8d8e8" stroke-width="2.5" stroke-linecap="round"/>
+      <circle cx="110" cy="102" r="6" fill="#8aabb8"/>
+      <!-- labels -->
+      <text x="24"  y="158" fill="#3a5568" font-size="10" font-family="monospace">0%</text>
+      <text x="110" y="18"  fill="#3a5568" font-size="10" font-family="monospace" text-anchor="middle">60%</text>
+      <text x="196" y="158" fill="#3a5568" font-size="10" font-family="monospace" text-anchor="end">120%</text>
+      <!-- 100% tick -->
+      <line id="pgTick100" x1="0" y1="0" x2="0" y2="0" stroke="#ffd60088" stroke-width="2" stroke-dasharray="4 2"/>
+    </svg>
+    <div class="power-pct" id="powerPct">100.0%</div>
+    <div class="power-sub">% OF NOMINAL (3000 MWt)</div>
+    <div style="margin-top:10px;width:100%;">
+      <div class="kv-row"><span class="kv-k">ρ Total</span><span class="kv-v" id="rhoTot">+0.00e+0 <span class="rho-unit">dk/k</span></span></div>
+      <div class="kv-row" style="padding:2px 2px 0;border-bottom:none;"><span class="kv-k" style="font-size:10px;letter-spacing:1px;">REACTIVITY BREAKDOWN</span></div>
+      <div class="kv-row"><span class="kv-k" style="padding-left:6px;">Rods</span><span class="kv-v" id="rhoRod">0.00e+0 <span class="rho-unit">dk/k</span></span></div>
+      <div class="kv-row"><span class="kv-k" style="padding-left:6px;">Doppler</span><span class="kv-v" id="rhoDoppler">0.00e+0 <span class="rho-unit">dk/k</span></span></div>
+      <div class="kv-row"><span class="kv-k" style="padding-left:6px;">Moderator</span><span class="kv-v" id="rhoMod">0.00e+0 <span class="rho-unit">dk/k</span></span></div>
+      <div class="kv-row"><span class="kv-k" style="padding-left:6px;">Boron</span><span class="kv-v" id="rhoBoron">0.00e+0 <span class="rho-unit">dk/k</span></span></div>
+      <div class="kv-row"><span class="kv-k" style="padding-left:6px;">ECCS</span><span class="kv-v" id="rhoEccs">0.00e+0 <span class="rho-unit">dk/k</span></span></div>
+      <div class="kv-row"><span class="kv-k" style="padding-left:6px;">Void</span><span class="kv-v" id="rhoVoid">0.00e+0 <span class="rho-unit">dk/k</span></span></div>
+      <div class="kv-row"><span class="kv-k" style="padding-left:6px;">Xenon</span><span class="kv-v" id="xeWorth">0.00e+0 <span class="rho-unit">dk/k</span></span></div>
+      <div class="kv-row"><span class="kv-k">Flow</span><span class="kv-v" id="flowPct">100.0%</span></div>
+      <div class="kv-row"><span class="kv-k">Boron (act)</span><span class="kv-v" id="boronDisp">1000 ppm</span></div>
+      <div class="kv-row"><span class="kv-k">Boron (tgt)</span><span class="kv-v" id="boronTgtDisp" style="color:var(--yellow)">1000 ppm</span></div>
+      <div class="kv-row"><span class="kv-k">Subcooling</span><span class="kv-v" id="subcoolingDisp">41°C</span></div>
+      <div class="kv-row"><span class="kv-k">T_In (cold-leg)</span><span class="kv-v" id="tInDisp">270.0°C</span></div>
+      <div class="kv-row"><span class="kv-k">T_Hot (hot-leg)</span><span class="kv-v" id="tHotLegDisp">330.0°C</span></div>
+      <div class="kv-row"><span class="kv-k">SCRAM</span><span class="kv-v" id="scramLbl" style="color:var(--green)">NO</span></div>
+      <div class="kv-row"><span class="kv-k">Cause</span><span class="kv-v" id="scramCause" style="color:var(--dim)">—</span></div>
+    </div>
+  </div>
+
+  <!-- T_fuel thermometer -->
+  <div class="card thermo-card">
+    <div class="ctitle">FUEL TEMP</div>
+    <svg viewBox="0 0 90 140" style="width:80px;height:130px;">
+      <!-- tube -->
+      <rect x="32" y="8" width="26" height="100" rx="13" fill="#080e18" stroke="#1e2d40" stroke-width="1.5"/>
+      <!-- fill (updated by JS) -->
+      <rect id="tfFill" x="33" y="60" width="24" height="47" rx="12" fill="var(--orange)"/>
+      <!-- bulb -->
+      <circle cx="45" cy="115" r="14" fill="var(--orange)" stroke="#1e2d40" stroke-width="1.5"/>
+      <circle cx="45" cy="115" r="9" fill="#ff9044"/>
+      <!-- scale lines + labels -->
+      <line x1="57" y1="8"  x2="63" y2="8"  stroke="#2a3d50" stroke-width="1"/>
+      <text x="65" y="11"  fill="#3a5568" font-size="8" font-family="monospace">1200</text>
+      <line x1="57" y1="57" x2="63" y2="57" stroke="#2a3d50" stroke-width="1"/>
+      <text x="65" y="60"  fill="#3a5568" font-size="8" font-family="monospace">600</text>
+      <line x1="57" y1="107" x2="63" y2="107" stroke="#2a3d50" stroke-width="1"/>
+      <text x="65" y="110" fill="#3a5568" font-size="8" font-family="monospace">0</text>
+    </svg>
+    <div class="thermo-val" id="tfVal" style="color:var(--orange)">600°C</div>
+    <div class="thermo-lbl">T_FUEL</div>
+    <div style="font-size:11px;color:var(--dim);margin-top:3px;">nom 600°C</div>
+    <div style="font-size:10px;color:#ff174488;margin-top:2px;">limit 1200°C</div>
+  </div>
+
+  <!-- T_cool thermometer -->
+  <div class="card thermo-card">
+    <div class="ctitle">COOL TEMP</div>
+    <svg viewBox="0 0 90 140" style="width:80px;height:130px;">
+      <rect x="32" y="8" width="26" height="100" rx="13" fill="#080e18" stroke="#1e2d40" stroke-width="1.5"/>
+      <rect id="tcFill" x="33" y="57" width="24" height="50" rx="12" fill="var(--cyan)"/>
+      <circle cx="45" cy="115" r="14" fill="var(--cyan)" stroke="#1e2d40" stroke-width="1.5"/>
+      <circle cx="45" cy="115" r="9" fill="#80f2ff"/>
+      <line x1="57" y1="8"  x2="63" y2="8"  stroke="#2a3d50" stroke-width="1"/>
+      <text x="65" y="11"  fill="#3a5568" font-size="8" font-family="monospace">500</text>
+      <line x1="57" y1="57" x2="63" y2="57" stroke="#2a3d50" stroke-width="1"/>
+      <text x="65" y="60"  fill="#3a5568" font-size="8" font-family="monospace">300</text>
+      <line x1="57" y1="107" x2="63" y2="107" stroke="#2a3d50" stroke-width="1"/>
+      <text x="65" y="110" fill="#3a5568" font-size="8" font-family="monospace">100</text>
+    </svg>
+    <div class="thermo-val" id="tcVal" style="color:var(--cyan)">300°C</div>
+    <div class="thermo-lbl">T_COOLANT</div>
+    <div style="font-size:11px;color:var(--dim);margin-top:3px;">nom 300°C</div>
+    <div style="font-size:10px;color:#ffd60088;margin-top:2px;">alarm 360°C</div>
+  </div>
+
+  <!-- Pressure gauge -->
+  <div class="card pres-card">
+    <div class="ctitle">RCS PRESSURE</div>
+    <div style="display:flex;flex-direction:column;align-items:center;">
+      <svg id="prSvg" viewBox="0 0 120 105" style="width:120px;height:105px;">
+        <path id="prBg"   fill="none" stroke="#0f1a26" stroke-width="16" stroke-linecap="round"/>
+        <path id="prZG"   fill="none" stroke="#002210" stroke-width="16" stroke-linecap="round"/>
+        <path id="prZY"   fill="none" stroke="#1a1000" stroke-width="16" stroke-linecap="round"/>
+        <path id="prZR"   fill="none" stroke="#1a0008" stroke-width="16" stroke-linecap="round"/>
+        <path id="prFill" fill="none" stroke="var(--cyan)" stroke-width="12" stroke-linecap="round"/>
+        <text id="prVal"  x="60" y="74" fill="white" font-size="18" font-family="monospace" font-weight="bold" text-anchor="middle">155</text>
+        <text              x="60" y="87" fill="#3a5568" font-size="9"  font-family="monospace" text-anchor="middle">bar</text>
+        <text x="6"  y="102" fill="#3a5568" font-size="8" font-family="monospace">0</text>
+        <text x="114" y="102" fill="#3a5568" font-size="8" font-family="monospace" text-anchor="end">200</text>
+      </svg>
+      <div style="font-size:11px;color:var(--dim);margin-top:2px;">Lo: 120 bar &nbsp;|&nbsp; Hi: 170 bar</div>
+    </div>
+    <div style="margin-top:8px;">
+      <div class="kv-row"><span class="kv-k">Offsite Pwr</span><span class="kv-v" id="offsiteLbl" style="color:var(--green)">OK</span></div>
+      <div class="kv-row"><span class="kv-k">ECCS</span><span class="kv-v" id="eccsLbl">IDLE</span></div>
+      <div class="kv-row"><span class="kv-k">HPSI</span><span class="kv-v" id="hpsiLbl" style="color:var(--dim)">OFF</span></div>
+      <div class="kv-row"><span class="kv-k">LPSI</span><span class="kv-v" id="lpsiLbl" style="color:var(--dim)">OFF</span></div>
+      <div class="kv-row">
+        <span class="kv-k">PORV</span>
+        <span class="kv-v" id="porvLbl" style="color:var(--green)">CLOSED</span>
+      </div>
+      <div class="kv-row">
+        <span class="kv-k">PRZR Level</span>
+        <span class="kv-v" style="display:flex;align-items:center;gap:5px;">
+          <span style="display:inline-block;width:7px;height:36px;background:#0f1a26;border:1px solid #1e2d40;border-radius:2px;position:relative;overflow:hidden;flex-shrink:0;">
+            <span id="przrLevelBar" style="position:absolute;bottom:0;width:100%;height:50%;background:var(--cyan);transition:height 0.2s;"></span>
+          </span>
+          <span id="przrLevel">50.0%</span>
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Rod banks -->
+  <div class="card rods-card">
+    <div class="ctitle">CONTROL RODS — % WITHDRAWN &nbsp; (100 = fully out · 0 = fully in)</div>
+    <div class="rod-grid">
+      <div class="rod-col">
+        <div class="rod-lbl">A · SHUTDOWN</div>
+        <div class="rod-pct" id="rp0">100%</div>
+        <input type="range" class="rod-slider" id="rs0" min="0" max="100" value="100"
+          oninput="onRodInput(0,this.value)">
+        <div class="rod-actual" id="ra0"></div>
+      </div>
+      <div class="rod-col">
+        <div class="rod-lbl">B · SHUTDOWN</div>
+        <div class="rod-pct" id="rp1">100%</div>
+        <input type="range" class="rod-slider" id="rs1" min="0" max="100" value="100"
+          oninput="onRodInput(1,this.value)">
+        <div class="rod-actual" id="ra1"></div>
+      </div>
+      <div class="rod-col">
+        <div class="rod-lbl">C · SHUTDOWN</div>
+        <div class="rod-pct" id="rp2">100%</div>
+        <input type="range" class="rod-slider" id="rs2" min="0" max="100" value="100"
+          oninput="onRodInput(2,this.value)">
+        <div class="rod-actual" id="ra2"></div>
+      </div>
+      <div class="rod-col">
+        <div class="rod-lbl" style="color:var(--cyan)">D · REGUL.</div>
+        <div class="rod-pct" id="rp3">100%</div>
+        <input type="range" class="rod-slider" id="rs3" min="0" max="100" value="100"
+          oninput="onRodInput(3,this.value)">
+        <div class="rod-actual" id="ra3"></div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- end row 1 -->
+
+<!-- ═══ ROW 1B: PHASE 2 INSTRUMENTS ═══ -->
+<div class="row" style="align-items:flex-start;">
+
+  <!-- Axial core map -->
+  <div class="card axial-card">
+    <div class="ctitle">CORE AXIAL MAP</div>
+    <div class="axial-map" id="axialMap"></div>
+    <div class="axial-regime" id="axialRegime" style="color:var(--green);">REGIME: SINGLE PHASE</div>
+  </div>
+
+  <!-- DNBR gauge -->
+  <div class="card dnbr-card" id="dnbrCard">
+    <div class="ctitle">DNBR</div>
+    <svg id="dnbrSvg" viewBox="0 0 120 105" style="width:120px;height:105px;">
+      <path id="dnbrBg"  fill="none" stroke="#0f1a26" stroke-width="16" stroke-linecap="round"/>
+      <path id="dnbrZR"  fill="none" stroke="#ff1744" stroke-width="16" stroke-linecap="round" opacity="0.75"/>
+      <path id="dnbrZO"  fill="none" stroke="#ff6d00" stroke-width="16" stroke-linecap="round" opacity="0.75"/>
+      <path id="dnbrZY"  fill="none" stroke="#ffd600" stroke-width="16" stroke-linecap="round" opacity="0.75"/>
+      <path id="dnbrZG"  fill="none" stroke="#00e676" stroke-width="16" stroke-linecap="round" opacity="0.75"/>
+      <line id="dnbrNeedle" x1="60" y1="60" x2="60" y2="28"
+            stroke="#c8d8e8" stroke-width="2.5" stroke-linecap="round"/>
+      <circle cx="60" cy="60" r="5" fill="#8aabb8"/>
+      <text id="dnbrVal" x="60" y="73" fill="#00e676"
+            font-size="18" font-family="monospace" font-weight="bold" text-anchor="middle">2.50</text>
+      <text x="60" y="85" fill="#3a5568" font-size="9"
+            font-family="monospace" text-anchor="middle">DNBR</text>
+      <text x="7"   y="101" fill="#3a5568" font-size="8" font-family="monospace">0</text>
+      <text x="113" y="101" fill="#3a5568" font-size="8" font-family="monospace" text-anchor="end">4.0</text>
+    </svg>
+    <div style="font-size:10px;color:var(--dim);margin-top:2px;text-align:center;">Limit 1.17 | Safe > 2.0</div>
+  </div>
+
+</div><!-- end row 1b -->
+
+<!-- ═══ ROW 2: PUMPS + DIESEL/ECCS ═══ -->
+<div class="row">
+
+  <!-- Pumps -->
+  <div class="card pumps-card">
+    <div class="ctitle">COOLANT PUMPS</div>
+    <div class="pump-grid">
+      <button class="pump-btn pump-on" id="pb0" onclick="togglePump(0)">PUMP 1<br>▶ RUN</button>
+      <button class="pump-btn pump-on" id="pb1" onclick="togglePump(1)">PUMP 2<br>▶ RUN</button>
+      <button class="pump-btn pump-on" id="pb2" onclick="togglePump(2)">PUMP 3<br>▶ RUN</button>
+      <button class="pump-btn pump-on" id="pb3" onclick="togglePump(3)">PUMP 4<br>▶ RUN</button>
+    </div>
+    <div style="margin-top:8px;">
+      <div class="kv-row"><span class="kv-k">Total Flow</span><span class="kv-v" id="flowDisp">100.0%</span></div>
+    </div>
+  </div>
+
+  <!-- Diesel generators -->
+  <div class="card dg-card">
+    <div class="ctitle">DIESEL GENERATORS</div>
+    <div class="dg-row">
+      <span class="dg-lbl">DG-1</span>
+      <span class="dg-stat dg-standby" id="dg0">STANDBY</span>
+      <button class="small-btn" onclick="startDiesel(0)">START</button>
+    </div>
+    <div class="dg-row">
+      <span class="dg-lbl">DG-2</span>
+      <span class="dg-stat dg-standby" id="dg1">STANDBY</span>
+      <button class="small-btn" onclick="startDiesel(1)">START</button>
+    </div>
+    <div style="margin-top:9px;border-top:1px solid var(--border);padding-top:8px;">
+      <div class="set-row">
+        <span class="set-lbl">ECCS Auto (uncheck to inhibit)</span>
+        <label class="tog"><input type="checkbox" id="eccsArmed" checked onchange="sendEccs()"><span class="tog-sl"></span></label>
+      </div>
+      <div class="set-row">
+        <span class="set-lbl">Boron target (ppm)</span>
+        <input type="number" class="tin" id="boronIn" min="0" max="2000" value="1000" step="50" onchange="sendBoron()">
+      </div>
+    </div>
+  </div>
+
+  <!-- Pressurizer heater / spray -->
+  <div class="card" style="width:190px;">
+    <div class="ctitle">PRESSURIZER CONTROL</div>
+    <div style="margin-bottom:6px;">
+      <div class="set-row">
+        <span class="set-lbl">Heaters</span>
+        <span id="przrHtrPct" style="color:var(--orange);font-weight:bold;font-size:12px;">0%</span>
+      </div>
+      <input type="range" id="przrHtr" min="0" max="100" value="0" style="width:100%;accent-color:var(--orange);"
+        oninput="onPrzrHeater(this.value)">
+      <div style="font-size:10px;color:var(--dim);margin-top:2px;">↑ raises pressure</div>
+    </div>
+    <div style="margin-top:8px;border-top:1px solid var(--border);padding-top:8px;">
+      <div class="set-row">
+        <span class="set-lbl">Spray</span>
+        <span id="przrSprayPct" style="color:var(--cyan);font-weight:bold;font-size:12px;">0%</span>
+      </div>
+      <input type="range" id="przrSpray" min="0" max="100" value="0" style="width:100%;accent-color:var(--cyan);"
+        oninput="onPrzrSpray(this.value)">
+      <div style="font-size:10px;color:var(--dim);margin-top:2px;">↓ lowers pressure</div>
+    </div>
+    <div style="margin-top:8px;border-top:1px solid var(--border);padding-top:8px;">
+      <div class="set-h">PORV</div>
+      <div class="set-row">
+        <span class="set-lbl" style="font-size:11px;">Manual open</span>
+        <label class="tog"><input type="checkbox" id="porvManual" onchange="sendPorv()"><span class="tog-sl"></span></label>
+      </div>
+      <button id="porvBlockBtn" onclick="closePorv()" style="width:100%;margin-top:4px;background:#2a1400;color:var(--yellow);border:1px solid var(--yellow);padding:4px;font:11px 'Courier New',monospace;cursor:pointer;border-radius:2px;">
+        CLOSE (block valve)
+      </button>
+      <div id="porvStuckLbl" style="font-size:10px;color:var(--dim);margin-top:3px;text-align:center;">auto</div>
+    </div>
+  </div>
+
+  <!-- Alarm annunciator -->
+  <div class="card alarm-card">
+    <div class="ctitle">ALARM ANNUNCIATOR</div>
+    <div class="alarm-grid" id="alarmGrid"></div>
+  </div>
+
+</div><!-- end row 2 -->
+
+<!-- ═══ TREND CHARTS ═══ -->
+<div class="charts-row">
+  <div class="card ch-card">
+    <div class="ctitle">POWER (% NOMINAL)</div>
+    <div class="ch-wrap"><canvas id="chPower"></canvas></div>
+  </div>
+  <div class="card ch-card">
+    <div class="ctitle">TEMPERATURES (°C)</div>
+    <div class="ch-wrap"><canvas id="chTemps"></canvas></div>
+  </div>
+  <div class="card ch-card">
+    <div class="ctitle">REACTIVITY (dk/k)</div>
+    <div class="ch-wrap"><canvas id="chRho"></canvas></div>
+  </div>
+</div>
+
+<!-- ═══ SCENARIO + SETTINGS ═══ -->
+<div class="bot-row">
+
+  <!-- Scenarios -->
+  <div class="card">
+    <div class="ctitle">SCENARIO CONTROL</div>
+    <div class="scen-row">
+      <select class="scen-sel" id="scenSel" onchange="updateDesc()">
+        <option value="loop">LOOP — Loss of Offsite Power</option>
+        <option value="sbo">SBO — Station Blackout</option>
+        <option value="loca">LOCA — Loss of Coolant</option>
+        <option value="rod_ejection">ROD EJECTION — Control Rod Failure</option>
+        <option value="xenon_pit">XENON PIT — Reactor Poisoning</option>
+        <option value="stuck_open_porv">STUCK OPEN PORV — TMI-2 Scenario</option>
+      </select>
+      <button class="btn-trig" onclick="triggerScenario()">▶ TRIGGER</button>
+    </div>
+    <div class="scen-desc" id="scenDesc"></div>
+    <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn-reset" onclick="resetSim()" title="Reset to clean 100% full-power state (fresh core, no xenon)">↺ RESET</button>
+      <button class="btn-fullpwr" onclick="loadFullPower()" title="Restore all controls to full-power settings without resetting physics">⚡ FULL POWER</button>
+      <button class="btn-cold" onclick="coldShutdown()" title="SCRAM reactor and fully insert all control rods">❄ COLD STOP</button>
+    </div>
+  </div>
+
+  <!-- Settings -->
+  <div class="card">
+    <div class="ctitle">SETTINGS &amp; MANUAL OVERRIDE</div>
+    <div class="set-grid">
+      <div>
+        <div class="set-h">PROTECTIONS (client-side)</div>
+        <div class="set-row"><span class="set-lbl">Auto-SCRAM &gt;115% pwr</span>
+          <label class="tog"><input type="checkbox" id="pSP" checked><span class="tog-sl"></span></label></div>
+        <div class="set-row"><span class="set-lbl">Auto-SCRAM Hi pressure</span>
+          <label class="tog"><input type="checkbox" id="pHP" checked><span class="tog-sl"></span></label></div>
+        <div class="set-row"><span class="set-lbl">Auto-SCRAM Lo pressure</span>
+          <label class="tog"><input type="checkbox" id="pLP" checked><span class="tog-sl"></span></label></div>
+        <div class="set-row"><span class="set-lbl">Auto-SCRAM Lo flow</span>
+          <label class="tog"><input type="checkbox" id="pLF" checked><span class="tog-sl"></span></label></div>
+        <div class="set-row"><span class="set-lbl">Auto-SCRAM Hi fuel temp</span>
+          <label class="tog"><input type="checkbox" id="pFT" checked><span class="tog-sl"></span></label></div>
+        <div class="set-row"><span class="set-lbl">Auto-SCRAM Hi cool temp</span>
+          <label class="tog"><input type="checkbox" id="pCT" checked><span class="tog-sl"></span></label></div>
+      </div>
+      <div>
+        <div class="set-h">MANUAL ROD ENTRY (0–100)</div>
+        <div class="set-row">
+          <span class="set-lbl">Rod model</span>
+          <select class="scen-sel" id="rodModelSel" style="max-width:120px;padding:4px 6px;" onchange="sendRodModel()">
+            <option value="current">current</option>
+            <option value="realism">realism</option>
+          </select>
+        </div>
+        <div class="set-row"><span class="set-lbl">Rod Bank A</span>
+          <input type="number" class="tin" id="mr0" min="0" max="100" value="100" onchange="sendManualRods()"></div>
+        <div class="set-row"><span class="set-lbl">Rod Bank B</span>
+          <input type="number" class="tin" id="mr1" min="0" max="100" value="100" onchange="sendManualRods()"></div>
+        <div class="set-row"><span class="set-lbl">Rod Bank C</span>
+          <input type="number" class="tin" id="mr2" min="0" max="100" value="100" onchange="sendManualRods()"></div>
+        <div class="set-row"><span class="set-lbl">Rod Bank D</span>
+          <input type="number" class="tin" id="mr3" min="0" max="100" value="100" onchange="sendManualRods()"></div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- end bot-row -->
+</div><!-- end wrap -->
+
+<script>
+'use strict';
+
+// ─── CONFIG ─────────────────────────────────────────────────────────────────
+const WS_URL  = 'ws://localhost:8000/ws';
+const MAX_PTS = 300;   // ~30 s at 10 Hz
+
+// ─── ALARM DEFINITIONS ──────────────────────────────────────────────────────
+const ALARMS = [
+  {k:'HIGH_POWER',      lbl:'HI POWER',    sev:'red'},
+  {k:'SCRAM',           lbl:'SCRAM',        sev:'red'},
+  {k:'HIGH_FUEL_TEMP',  lbl:'HI FUEL T',   sev:'red'},
+  {k:'CLADDING_FAIL',   lbl:'CLAD FAIL',   sev:'red'},
+  {k:'HIGH_PRESSURE',   lbl:'HI PRESS',    sev:'red'},
+  {k:'LOW_PRESSURE',    lbl:'LO PRESS',    sev:'red'},
+  {k:'LOCA',            lbl:'LOCA',         sev:'red'},
+  {k:'ECCS_ACTIVE',     lbl:'ECCS ACTV',   sev:'red'},
+  {k:'ROD_EJECTION',    lbl:'ROD EJECT',   sev:'red'},
+  {k:'LOW_SUBCOOLING',  lbl:'LO SUBCOOL',  sev:'red'},
+  {k:'HIGH_COOL_TEMP',  lbl:'HI COOL T',   sev:'yellow'},
+  {k:'LOW_FLOW',        lbl:'LO FLOW',     sev:'yellow'},
+  {k:'LOOP',            lbl:'LOOP',         sev:'yellow'},
+  {k:'SBO',             lbl:'SBO',          sev:'yellow'},
+  {k:'DIESEL_FAILED',   lbl:'DG FAIL',     sev:'yellow'},
+  {k:'HIGH_XENON',      lbl:'HI XENON',    sev:'yellow'},
+  {k:'PUMP_TRIP',       lbl:'PUMP TRIP',   sev:'yellow'},
+  {k:'XENON_PIT',       lbl:'XENON PIT',   sev:'yellow'},
+  {k:'LOW_PRZR_LEVEL',  lbl:'LO PRZR LVL', sev:'yellow'},
+  {k:'HIGH_PRZR_LEVEL', lbl:'HI PRZR LVL', sev:'yellow'},
+  {k:'PORV_OPEN',       lbl:'PORV OPEN',   sev:'yellow'},
+  {k:'PORV_STUCK_OPEN', lbl:'PORV STUCK',  sev:'red'},
+];
+
+const SCEN_DESC = {
+  loop:         'Grid disconnect. All 4 pumps coast down (τ ≈ 30 s). Diesels start automatically. Core temp rises; decay heat must be removed by natural circulation or ECCS.',
+  sbo:          'LOOP + both diesels fail immediately. No pump power available. Battery-backed instrumentation only. Natural circulation + passive accumulator ECCS is the only option.',
+  loca:         'Large primary-loop pipe break. Rapid RCS depressurisation. Void reactivity spike → SCRAM. ECCS HPSI activates. Verify core cooling margin.',
+  rod_ejection: 'Bank A ejected fully in < 0.1 s. Large prompt reactivity insertion. Doppler feedback self-limits if within design basis. Watch the prompt power spike.',
+  xenon_pit:       'Shutdown at 100% power. Xe-135 builds to peak (~3 hr post-trip). Restart impossible for ~30 hr. Demonstrates xenon poisoning dynamics.',
+  stuck_open_porv: 'PORV opens normally but fails to reclose (TMI-2 initiating event). Slow primary-system bleed — ~2.5 min to low-pressure SCRAM. Use the block valve (CLOSE button) to isolate.',
+};
+
+// ─── STATE ───────────────────────────────────────────────────────────────────
+let pumpStates = [true, true, true, true];
+let rodVals    = [100, 100, 100, 100];
+let lastS      = null;
+
+// Track when each rod slider was last touched by the user (ms timestamp).
+// Prevents the 10 Hz server broadcast from overwriting a slider before the POST
+// has been acknowledged and the new server state comes back (~200 ms round-trip).
+const sliderTouched = [0, 0, 0, 0];
+const SLIDER_GUARD_MS = 600;
+
+// ─── NUMBER FORMATTERS ───────────────────────────────────────────────────────
+function fmtRho(v) {
+  if (Math.abs(v) < 1e-10) return '0.00e+0';
+  const s = v.toExponential(2);
+  return v >= 0 ? '+' + s : s;
+}
+
+function fmtFlow(v) { return v.toFixed(1) + '%'; }
+function fmtTemp(v) { return v.toFixed(0) + '°C'; }
+function fmtPres(v) { return v.toFixed(1); }
+function fmtPwr(v)  { return v.toFixed(1) + '%'; }
+
+// ─── GAUGE MATH ──────────────────────────────────────────────────────────────
+function ang2xy(deg, cx, cy, r) {
+  const rad = (deg - 90) * Math.PI / 180;
+  return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+}
+
+function arcD(a1, a2, cx, cy, r) {
+  const s = ang2xy(a1, cx, cy, r);
+  const e = ang2xy(a2, cx, cy, r);
+  const da = a2 - a1;
+  const large = Math.abs(da) > 180 ? 1 : 0;
+  const sweep = da > 0 ? 1 : 0;
+  return `M${s.x} ${s.y} A${r} ${r} 0 ${large} ${sweep} ${e.x} ${e.y}`;
+}
+
+// Power gauge: CX=110, CY=102, R=80
+const PG = { cx:110, cy:102, r:80, s:225, e:495, max:120 };
+function pgAng(pct) { return PG.s + (Math.min(Math.max(pct,0), PG.max) / PG.max) * (PG.e - PG.s); }
+
+// Pressure gauge: CX=60, CY=60, R=46
+const PR = { cx:60, cy:60, r:46, s:225, e:495, max:200 };
+function prAng(bar) { return PR.s + (Math.min(Math.max(bar,0), PR.max) / PR.max) * (PR.e - PR.s); }
+
+function updatePowerGauge(pct) {
+  const clamp = Math.min(Math.max(pct,0), 120);
+  const a = pgAng(clamp);
+  const color = pct > 110 ? 'var(--red)' : pct > 100 ? 'var(--yellow)' : 'var(--green)';
+  const fillEl = document.getElementById('pgFill');
+  if (clamp > 0.1) {
+    fillEl.setAttribute('d', arcD(PG.s, a, PG.cx, PG.cy, PG.r));
+    fillEl.setAttribute('stroke', color);
+  } else {
+    fillEl.setAttribute('d', '');
+  }
+  const np = ang2xy(a, PG.cx, PG.cy, PG.r - 14);
+  const needle = document.getElementById('pgNeedle');
+  needle.setAttribute('x2', np.x);
+  needle.setAttribute('y2', np.y);
+  const el = document.getElementById('powerPct');
+  el.textContent = fmtPwr(pct);
+  el.style.color = color;
+}
+
+function updatePressureGauge(bar) {
+  const clamp = Math.min(Math.max(bar,0), 200);
+  const a = prAng(clamp);
+  const color = bar > 170 || bar < 120 ? 'var(--red)' :
+                bar > 160 || bar < 130 ? 'var(--yellow)' : 'var(--cyan)';
+  const fillEl = document.getElementById('prFill');
+  if (clamp > 0.1) {
+    fillEl.setAttribute('d', arcD(PR.s, a, PR.cx, PR.cy, PR.r));
+    fillEl.setAttribute('stroke', color);
+  } else {
+    fillEl.setAttribute('d', '');
+  }
+  document.getElementById('prVal').textContent = fmtPres(bar);
+  document.getElementById('prVal').setAttribute('fill', color);
+}
+
+function updateFuelThermo(tc) {
+  const frac = Math.min(Math.max(tc, 0) / 1200, 1);
+  const h = Math.round(frac * 99);
+  const el = document.getElementById('tfFill');
+  el.setAttribute('y', 107 - h);
+  el.setAttribute('height', Math.max(h, 1));
+  const col = tc > 1000 ? 'var(--red)' : tc > 700 ? 'var(--yellow)' : 'var(--orange)';
+  el.setAttribute('fill', col);
+  const v = document.getElementById('tfVal');
+  v.textContent = fmtTemp(tc);
+  v.style.color = col;
+}
+
+function updateCoolThermo(tc) {
+  const frac = Math.min(Math.max(tc - 100, 0) / 400, 1);
+  const h = Math.round(frac * 99);
+  const el = document.getElementById('tcFill');
+  el.setAttribute('y', 107 - h);
+  el.setAttribute('height', Math.max(h, 1));
+  const col = tc > 360 ? 'var(--red)' : tc > 330 ? 'var(--yellow)' : 'var(--cyan)';
+  el.setAttribute('fill', col);
+  const v = document.getElementById('tcVal');
+  v.textContent = fmtTemp(tc);
+  v.style.color = col;
+}
+
+// ─── ALARM GRID ───────────────────────────────────────────────────────────────
+function initAlarms() {
+  const g = document.getElementById('alarmGrid');
+  g.innerHTML = '';
+  ALARMS.forEach(a => {
+    const d = document.createElement('div');
+    d.className = 'atile a-off';
+    d.id = 'al_' + a.k;
+    d.textContent = a.lbl;
+    g.appendChild(d);
+  });
+}
+
+function updateAlarms(active) {
+  const set = new Set(active);
+  ALARMS.forEach(a => {
+    const el = document.getElementById('al_' + a.k);
+    if (!el) return;
+    el.className = 'atile ' + (set.has(a.k) ? 'a-' + a.sev : 'a-off');
+  });
+  const known = new Set(ALARMS.map(a => a.k));
+  active.forEach(k => {
+    if (known.has(k)) return;
+    let el = document.getElementById('al_' + k);
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'atile a-red';
+      el.id = 'al_' + k;
+      el.textContent = k.replace(/_/g,' ');
+      document.getElementById('alarmGrid').appendChild(el);
+    } else {
+      el.className = 'atile a-red';
+    }
+  });
+}
+
+// ─── CHART SETUP ─────────────────────────────────────────────────────────────
+const chartOpts = () => ({
+  type: 'line',
+  options: {
+    animation: false,
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode:'index', intersect:false },
+    plugins: {
+      legend: { labels: { color:'#5a7a90', font:{ size:11, family:'monospace' }, boxWidth:12 } }
+    },
+    scales: {
+      x: { display: false },
+      y: {
+        ticks: { color:'#5a7a90', font:{ size:11, family:'monospace' } },
+        grid:  { color:'#0f1a26' }
+      }
+    }
+  }
+});
+
+function ds(label, color) {
+  return { label, data:[], borderColor:color, backgroundColor:color+'18',
+           borderWidth:1.5, pointRadius:0, tension:0.15, fill:false };
+}
+
+const chPower = new Chart(document.getElementById('chPower'), {
+  ...chartOpts(),
+  data: { labels: Array(MAX_PTS).fill(''), datasets: [ds('Power %','#00e676')] }
+});
+const chTemps = new Chart(document.getElementById('chTemps'), {
+  ...chartOpts(),
+  data: { labels: Array(MAX_PTS).fill(''), datasets: [ds('T_Fuel','#ff6d00'), ds('T_Cool','#00e5ff')] }
+});
+const chRho = new Chart(document.getElementById('chRho'), {
+  ...chartOpts(),
+  data: { labels: Array(MAX_PTS).fill(''), datasets: [
+    ds('ρ_total',   '#00e676'),
+    ds('Xe',        '#ff1744'),
+    ds('Rods',      '#2979ff'),
+    ds('Doppler',   '#ff6d00'),
+    ds('Moderator', '#00e5ff'),
+    ds('Boron',     '#ffd600'),
+    ds('ECCS',      '#ffab00'),
+    ds('Void',      '#d500f9'),
+  ]}
+});
+
+function pushChart(chart, ...vals) {
+  vals.forEach((v,i) => {
+    chart.data.datasets[i].data.push(v);
+    if (chart.data.datasets[i].data.length > MAX_PTS) chart.data.datasets[i].data.shift();
+  });
+  chart.update('none');
+}
+
+// ─── WEBSOCKET ────────────────────────────────────────────────────────────────
+let ws = null, wsTimer = null;
+
+function connectWS() {
+  if (ws && ws.readyState < 2) return;
+  ws = new WebSocket(WS_URL);
+  ws.onopen  = () => {
+    document.getElementById('wsLbl').textContent = 'ONLINE';
+    document.getElementById('wsLbl').style.color = 'var(--green)';
+    if (wsTimer) { clearTimeout(wsTimer); wsTimer = null; }
+  };
+  ws.onclose = () => {
+    document.getElementById('wsLbl').textContent = 'OFFLINE';
+    document.getElementById('wsLbl').style.color = 'var(--red)';
+    wsTimer = setTimeout(connectWS, 2000);
+  };
+  ws.onerror = () => ws.close();
+  ws.onmessage = e => { try { handleState(JSON.parse(e.data)); } catch(_) {} };
+}
+
+// ─── STATE HANDLER ────────────────────────────────────────────────────────────
+function handleState(s) {
+  lastS = s;
+
+  document.getElementById('simT').textContent = s.t.toFixed(1) + 's';
+
+  updatePowerGauge(s.power_pct);
+
+  const rhoUnit = ' <span class="rho-unit">dk/k</span>';
+  document.getElementById('rhoTot').innerHTML     = fmtRho(s.rho_total) + rhoUnit;
+  document.getElementById('rhoRod').innerHTML     = fmtRho(s.rho_rod ?? 0) + rhoUnit;
+  document.getElementById('rhoDoppler').innerHTML = fmtRho(s.rho_doppler ?? 0) + rhoUnit;
+  document.getElementById('rhoMod').innerHTML     = fmtRho(s.rho_moderator ?? 0) + rhoUnit;
+  document.getElementById('rhoBoron').innerHTML   = fmtRho(s.rho_boron ?? 0) + rhoUnit;
+  document.getElementById('rhoEccs').innerHTML    = fmtRho(s.rho_eccs ?? 0) + rhoUnit;
+  document.getElementById('rhoVoid').innerHTML    = fmtRho(s.rho_void ?? 0) + rhoUnit;
+  document.getElementById('xeWorth').innerHTML    = fmtRho(s.xenon_worth) + rhoUnit;
+  document.getElementById('flowPct').textContent  = fmtFlow(s.flow_pct);
+  document.getElementById('flowDisp').textContent = fmtFlow(s.flow_pct);
+
+  const boronEl = document.getElementById('boronDisp');
+  if (boronEl) { boronEl.textContent = (s.boron_ppm != null ? s.boron_ppm.toFixed(0) : '—') + ' ppm'; }
+  const boronTgtEl = document.getElementById('boronTgtDisp');
+  if (boronTgtEl) {
+    const tgt = s.boron_target_ppm ?? s.boron_ppm ?? 0;
+    boronTgtEl.textContent = tgt.toFixed(0) + ' ppm';
+    boronTgtEl.style.color = Math.abs(tgt - (s.boron_ppm ?? 0)) > 1 ? 'var(--yellow)' : 'var(--cyan)';
+  }
+  const boronIn = document.getElementById('boronIn');
+  if (boronIn && document.activeElement !== boronIn) boronIn.value = Math.round(s.boron_target_ppm ?? s.boron_ppm ?? 0);
+
+  const scEl2 = document.getElementById('subcoolingDisp');
+  if (scEl2) {
+    const sc = s.subcooling ?? 0;
+    scEl2.textContent = sc.toFixed(1) + '°C';
+    scEl2.style.color = sc < 10 ? 'var(--red)' : sc < 20 ? 'var(--yellow)' : 'var(--cyan)';
+  }
+
+  const tInEl = document.getElementById('tInDisp');
+  if (tInEl) {
+    const tin = s.t_in ?? 270.0;
+    tInEl.textContent = tin.toFixed(1) + '°C';
+    tInEl.style.color = tin > 285 ? 'var(--red)' : tin > 278 ? 'var(--yellow)' : 'var(--cyan)';
+  }
+
+  const tHotLegEl = document.getElementById('tHotLegDisp');
+  if (tHotLegEl) {
+    const thl = s.t_hot_leg ?? (2 * (s.t_cool ?? 300) - (s.t_in ?? 270));
+    tHotLegEl.textContent = thl.toFixed(1) + '°C';
+    tHotLegEl.style.color = thl > 340 ? 'var(--red)' : thl > 320 ? 'var(--yellow)' : 'var(--cyan)';
+  }
+
+  const przrEl = document.getElementById('przrLevel');
+  const przrBarEl = document.getElementById('przrLevelBar');
+  if (przrEl && przrBarEl) {
+    const lvl = s.pressurizer_level ?? 50.0;
+    przrEl.textContent = lvl.toFixed(1) + '%';
+    const col = lvl < 25 ? 'var(--red)' : lvl < 35 || lvl > 70 ? 'var(--yellow)' : 'var(--cyan)';
+    przrEl.style.color = col;
+    przrBarEl.style.height = Math.min(100, Math.max(0, lvl)) + '%';
+    przrBarEl.style.background = col;
+  }
+
+  const scEl = document.getElementById('scramLbl');
+  scEl.textContent = s.scram ? 'YES' : 'NO';
+  scEl.style.color = s.scram ? 'var(--red)' : 'var(--green)';
+  const causeEl = document.getElementById('scramCause');
+  if (causeEl) {
+    causeEl.textContent = s.scram_cause || '—';
+    causeEl.style.color = s.scram_cause ? 'var(--red)' : 'var(--dim)';
+  }
+
+  const sBtn = document.getElementById('scramBtn');
+  if (s.scram) {
+    sBtn.classList.add('active');
+    sBtn.textContent = '⚡ SCRAMMED ⚡';
+  } else {
+    sBtn.classList.remove('active');
+    sBtn.textContent = '⚠ SCRAM ⚠';
+  }
+  const resetBtn = document.getElementById('scramResetBtn');
+  if (resetBtn) {
+    resetBtn.disabled = !s.scram_reset_permitted;
+    resetBtn.title = s.scram_reset_permitted
+      ? 'Clear the SCRAM latch; rods remain inserted'
+      : ((s.scram_reset_blockers || []).join(', ') || 'SCRAM is not latched');
+  }
+
+  updateFuelThermo(s.t_fuel);
+  updateCoolThermo(s.t_cool);
+  updatePressureGauge(s.pressure);
+
+  const hasLOOP = s.alarms.includes('LOOP') || s.alarms.includes('SBO');
+  const opEl = document.getElementById('offsiteLbl');
+  opEl.textContent = hasLOOP ? 'LOST' : 'OK';
+  opEl.style.color = hasLOOP ? 'var(--red)' : 'var(--green)';
+
+  const ecEl = document.getElementById('eccsLbl');
+  ecEl.textContent = s.alarms.includes('ECCS_ACTIVE') ? 'ACTIVE' : (s.eccs_armed ? 'AUTO' : 'INHIBITED');
+  ecEl.style.color = s.alarms.includes('ECCS_ACTIVE') ? 'var(--red)' : (s.eccs_armed ? 'var(--green)' : 'var(--yellow)');
+  const ecCb = document.getElementById('eccsArmed');
+  if (ecCb && document.activeElement !== ecCb) ecCb.checked = s.eccs_armed;
+
+  const hpsiEl = document.getElementById('hpsiLbl');
+  if (hpsiEl) { hpsiEl.textContent = s.eccs_hpsi ? 'INJECTING' : 'OFF'; hpsiEl.style.color = s.eccs_hpsi ? 'var(--red)' : 'var(--dim)'; }
+  const lpsiEl = document.getElementById('lpsiLbl');
+  if (lpsiEl) { lpsiEl.textContent = s.eccs_lpsi ? 'INJECTING' : 'OFF'; lpsiEl.style.color = s.eccs_lpsi ? 'var(--red)' : 'var(--dim)'; }
+
+  const now = Date.now();
+  const rodTargets = s.rod_target_position || s.rod_position;
+  rodTargets.forEach((v, i) => {
+    if ((now - sliderTouched[i]) > SLIDER_GUARD_MS) {
+      const sl = document.getElementById('rs' + i);
+      if (sl) { sl.value = v; rodVals[i] = v; }
+      const pe = document.getElementById('rp' + i);
+      if (pe) pe.textContent = Math.round(v) + '%';
+    }
+    const mr = document.getElementById('mr' + i);
+    if (mr && document.activeElement !== mr) mr.value = Math.round(rodVals[i]);
+    // Show actual (physics) rod position when it lags the target
+    const ra = document.getElementById('ra' + i);
+    if (ra) {
+      const actual = s.rod_position ? s.rod_position[i] : v;
+      const diff = Math.abs(actual - v);
+      ra.textContent = diff > 0.5 ? ('→' + Math.round(actual) + '%') : '';
+    }
+  });
+
+  const rodModelSel = document.getElementById('rodModelSel');
+  if (rodModelSel && document.activeElement !== rodModelSel) {
+    rodModelSel.value = (s.rod_model === 'realism') ? 'realism' : 'current';
+  }
+
+  const porvLbl = document.getElementById('porvLbl');
+  if (porvLbl) {
+    if (s.porv_stuck_open) {
+      porvLbl.textContent = 'STUCK OPEN';
+      porvLbl.style.color = 'var(--red)';
+    } else if (s.porv_open) {
+      porvLbl.textContent = 'OPEN';
+      porvLbl.style.color = 'var(--yellow)';
+    } else {
+      porvLbl.textContent = 'CLOSED';
+      porvLbl.style.color = 'var(--green)';
+    }
+  }
+  const porvManual = document.getElementById('porvManual');
+  if (porvManual && document.activeElement !== porvManual) porvManual.checked = s.porv_open ?? false;
+  const porvStuckLbl = document.getElementById('porvStuckLbl');
+  if (porvStuckLbl) {
+    porvStuckLbl.textContent = s.porv_stuck_open ? '⚠ STUCK OPEN — use CLOSE to isolate' : 'auto';
+    porvStuckLbl.style.color = s.porv_stuck_open ? 'var(--red)' : 'var(--dim)';
+  }
+
+  const przrHtrEl = document.getElementById('przrHtr');
+  if (przrHtrEl && document.activeElement !== przrHtrEl) {
+    const htrPct = s.przr_heater_pct ?? 0;
+    przrHtrEl.value = htrPct;
+    document.getElementById('przrHtrPct').textContent = Math.round(htrPct) + '%';
+  }
+  const przrSprayEl = document.getElementById('przrSpray');
+  if (przrSprayEl && document.activeElement !== przrSprayEl) {
+    const sprayPct = s.przr_spray_pct ?? 0;
+    przrSprayEl.value = sprayPct;
+    document.getElementById('przrSprayPct').textContent = Math.round(sprayPct) + '%';
+  }
+
+  s.pumps.forEach((on, i) => {
+    pumpStates[i] = on;
+    const b = document.getElementById('pb' + i);
+    if (b) {
+      b.className = 'pump-btn ' + (on ? 'pump-on' : 'pump-off');
+      b.innerHTML = `PUMP ${i+1}<br>${on ? '▶ RUN' : '■ STOP'}`;
+    }
+  });
+
+  s.diesels.forEach((st, i) => {
+    const el = document.getElementById('dg' + i);
+    if (!el) return;
+    const norm = st.toLowerCase().replace(/\s+/g,'-');
+    el.className = 'dg-stat dg-' + norm;
+    el.textContent = st.toUpperCase();
+  });
+
+  const activeAlarms = [...s.alarms];
+  if (s.scram) activeAlarms.push('SCRAM');
+  updateAlarms(activeAlarms);
+
+  pushChart(chPower, s.power_pct);
+  pushChart(chTemps, s.t_fuel, s.t_cool);
+  pushChart(chRho, s.rho_total, s.xenon_worth, s.rho_rod ?? 0, s.rho_doppler ?? 0, s.rho_moderator ?? 0, s.rho_boron ?? 0, s.rho_eccs ?? 0, s.rho_void ?? 0);
+
+  // ── Phase 2 instruments ──
+  updateAxialMap(s);
+  updateDnbrGauge(s);
+
+  if (!s.scram) checkProtections(s);
+
+  // Sync bypass toggles from server state (covers page reload / reconnect)
+  if (s.scram_bypasses && typeof PROT_MAP !== 'undefined') {
+    Object.entries(PROT_MAP).forEach(([id, ch]) => {
+      const el = document.getElementById(id);
+      if (el) el.checked = !s.scram_bypasses.includes(ch);
+    });
+  }
+}
+
+// ─── PROTECTIONS ─────────────────────────────────────────────────────────────
+// Map toggle ID → SCRAM channel name (must match server-side scram_cause strings)
+const PROT_MAP = {
+  pSP: 'HI_POWER', pHP: 'HI_PRESSURE', pLP: 'LO_PRESSURE',
+  pLF: 'LO_FLOW',  pFT: 'HI_FUEL_TEMP', pCT: 'HI_COOL_TEMP',
+};
+
+function sendBypasses() {
+  const bypassed = Object.entries(PROT_MAP)
+    .filter(([id]) => !document.getElementById(id).checked)
+    .map(([, ch]) => ch);
+  postControl({ scram_bypasses: bypassed });
+}
+
+// Push bypass state to server whenever any toggle changes
+document.addEventListener('DOMContentLoaded', () => {
+  Object.keys(PROT_MAP).forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('change', sendBypasses);
+  });
+});
+
+function checkProtections(s) {
+  const needScram =
+    (document.getElementById('pSP').checked && s.power_pct > 115) ||
+    (document.getElementById('pHP').checked && s.pressure > 170) ||
+    (document.getElementById('pLP').checked && s.pressure < 120 && s.pressure > 5) ||
+    (document.getElementById('pLF').checked && s.flow_pct < 25) ||
+    (document.getElementById('pFT').checked && s.t_fuel > 900) ||
+    (document.getElementById('pCT').checked && s.t_cool > 350);
+  if (needScram) postControl({ scram: true });
+}
+
+// ─── CONTROLS ────────────────────────────────────────────────────────────────
+async function postControl(body) {
+  try {
+    await fetch('/control', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+    });
+  } catch(e) { console.warn('/control error', e); }
+}
+
+function doScram() {
+  postControl({ scram: true });
+}
+
+function resetScram() {
+  postControl({ scram_reset: true });
+}
+
+function onRodInput(i, v) {
+  rodVals[i] = parseFloat(v);
+  sliderTouched[i] = Date.now();
+  document.getElementById('rp' + i).textContent = Math.round(v) + '%';
+  clearTimeout(rodDebounce);
+  rodDebounce = setTimeout(() => postControl({ rod_positions: [...rodVals] }), 50);
+}
+let rodDebounce = null;
+
+function togglePump(i) {
+  pumpStates[i] = !pumpStates[i];
+  postControl({ pumps: [...pumpStates] });
+}
+
+function startDiesel(i) {
+  const sig = [false, false];
+  sig[i] = true;
+  postControl({ diesel_start_signals: sig });
+}
+
+function sendEccs() {
+  postControl({ eccs_armed: document.getElementById('eccsArmed').checked });
+}
+
+function sendBoron() {
+  postControl({ boron_ppm: parseFloat(document.getElementById('boronIn').value) || 0 });
+}
+
+function sendPorv() {
+  postControl({ porv_open: document.getElementById('porvManual').checked });
+}
+
+function closePorv() {
+  postControl({ porv_open: false, porv_stuck_open: false });
+  document.getElementById('porvManual').checked = false;
+}
+
+function onPrzrHeater(v) {
+  document.getElementById('przrHtrPct').textContent = Math.round(v) + '%';
+  postControl({ przr_heater_fraction: parseFloat(v) / 100.0 });
+}
+
+function onPrzrSpray(v) {
+  document.getElementById('przrSprayPct').textContent = Math.round(v) + '%';
+  postControl({ przr_spray_fraction: parseFloat(v) / 100.0 });
+}
+
+function sendManualRods() {
+  const rods = [0,1,2,3].map(i => {
+    const el = document.getElementById('mr' + i);
+    return Math.min(100, Math.max(0, parseFloat(el.value) || 0));
+  });
+  rods.forEach((v,i) => {
+    rodVals[i] = v;
+    const sl = document.getElementById('rs' + i);
+    if (sl) sl.value = v;
+    const pe = document.getElementById('rp' + i);
+    if (pe) pe.textContent = Math.round(v) + '%';
+  });
+  postControl({ rod_positions: rods });
+}
+
+function sendRodModel() {
+  const sel = document.getElementById('rodModelSel');
+  if (!sel) return;
+  const mode = (sel.value === 'realism') ? 'realism' : 'current';
+  postControl({ rod_model: mode });
+}
+
+async function triggerScenario() {
+  const name = document.getElementById('scenSel').value;
+  try {
+    await fetch('/scenario', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name})
+    });
+  } catch(e) { console.warn('/scenario error', e); }
+}
+
+async function resetSim() {
+  try { await fetch('/reset', { method:'POST' }); } catch(e) { console.warn(e); }
+  pumpStates = [true, true, true, true];
+  rodVals = [100, 100, 100, 100];
+  [0,1,2,3].forEach(i => {
+    const s = document.getElementById('rs' + i); if (s) s.value = 100;
+    const p = document.getElementById('rp' + i); if (p) p.textContent = '100%';
+    const m = document.getElementById('mr' + i); if (m) m.value = 100;
+  });
+  document.getElementById('boronIn').value = 1000;
+  postControl({ boron_ppm: 1000 });
+  document.getElementById('eccsArmed').checked = true;
+  const htr = document.getElementById('przrHtr'); if (htr) htr.value = 0;
+  const htrP = document.getElementById('przrHtrPct'); if (htrP) htrP.textContent = '0%';
+  const spr = document.getElementById('przrSpray'); if (spr) spr.value = 0;
+  const sprP = document.getElementById('przrSprayPct'); if (sprP) sprP.textContent = '0%';
+  const pm = document.getElementById('porvManual'); if (pm) pm.checked = false;
+  postControl({ przr_heater_fraction: 0, przr_spray_fraction: 0, porv_open: false, porv_stuck_open: false });
+  [chPower, chTemps, chRho].forEach(c => {
+    c.data.datasets.forEach(d => d.data = []);
+    c.update('none');
+  });
+}
+
+function loadFullPower() {
+  // Restore operator controls to full-power equilibrium settings (does not reset physics).
+  // Rods at 75% = criticality balance with 1000 ppm boron + equilibrium xenon.
+  // The CRDM will drive rods gradually from current position; rate depends on rod_model.
+  rodVals = [75, 75, 75, 75];
+  pumpStates = [true, true, true, true];
+  [0,1,2,3].forEach(i => {
+    const s = document.getElementById('rs' + i); if (s) s.value = 75;
+    const p = document.getElementById('rp' + i); if (p) p.textContent = '75%';
+    const m = document.getElementById('mr' + i); if (m) m.value = 75;
+  });
+  document.getElementById('boronIn').value = 1000;
+  document.getElementById('eccsArmed').checked = true;
+  postControl({
+    rod_positions: [75, 75, 75, 75],
+    pumps: [true, true, true, true],
+    boron_ppm: 1000,
+    eccs_armed: true,
+  });
+}
+
+function coldShutdown() {
+  // SCRAM + fully insert all control rods
+  rodVals = [0, 0, 0, 0];
+  [0,1,2,3].forEach(i => {
+    const s = document.getElementById('rs' + i); if (s) s.value = 0;
+    const p = document.getElementById('rp' + i); if (p) p.textContent = '0%';
+    const m = document.getElementById('mr' + i); if (m) m.value = 0;
+  });
+  postControl({ scram: true, rod_positions: [0, 0, 0, 0] });
+}
+
+function updateDesc() {
+  document.getElementById('scenDesc').textContent =
+    SCEN_DESC[document.getElementById('scenSel').value] || '';
+}
+
+// ─── PHASE 2: VOID COLOR ─────────────────────────────────────────────────────
+function voidColor(alpha) {
+  if (alpha < 0.05)  return '#1a3a5c';
+  if (alpha < 0.20)  return '#4a90d9';
+  if (alpha < 0.50)  return '#a8d8ea';
+  if (alpha < 0.70)  return '#e8f4f8';
+  return '#ff6b35';
+}
+
+// ─── PHASE 2: AXIAL MAP ──────────────────────────────────────────────────────
+function initAxialMap() {
+  const container = document.getElementById('axialMap');
+  if (!container) return;
+  container.innerHTML = '';
+  // Render node 9 first in DOM (top of column), node 0 last (bottom)
+  for (let i = 9; i >= 0; i--) {
+    const row = document.createElement('div');
+    row.className = 'axial-row'; row.id = 'axial-row-' + i;
+
+    const lbl = document.createElement('span');
+    lbl.className = 'axial-node-lbl'; lbl.textContent = i;
+
+    const cell = document.createElement('div');
+    cell.className = 'axial-cell'; cell.id = 'axial-cell-' + i;
+
+    const voidFill = document.createElement('div');
+    voidFill.className = 'axial-void-fill'; voidFill.id = 'axial-void-' + i;
+    voidFill.style.background = '#1a3a5c';
+
+    const powerWrap = document.createElement('div');
+    powerWrap.className = 'axial-power-wrap';
+
+    const powerBar = document.createElement('div');
+    powerBar.className = 'axial-power-bar'; powerBar.id = 'axial-power-' + i;
+    powerBar.style.width = '13px'; // ~1.0/1.5 × 20px default
+
+    powerWrap.appendChild(powerBar);
+    cell.appendChild(voidFill); cell.appendChild(powerWrap);
+    row.appendChild(lbl); row.appendChild(cell);
+    container.appendChild(row);
+  }
+}
+
+function updateAxialMap(s) {
+  const vf    = s.void_fraction     || Array(10).fill(0);
+  const ps    = s.axial_power_shape || Array(10).fill(1);
+  const tfAx  = s.t_fuel_axial      || Array(10).fill(600);
+  const tcAx  = s.t_cool_axial      || Array(10).fill(300);
+  const hf    = s.heat_flux         || Array(10).fill(0);
+  const fbSet = new Set(s.film_boiling_nodes || []);
+  const rgms  = s.boiling_regime    || Array(10).fill('single_phase');
+
+  for (let i = 0; i < 10; i++) {
+    const vEl = document.getElementById('axial-void-'  + i);
+    const pEl = document.getElementById('axial-power-' + i);
+    const cEl = document.getElementById('axial-cell-'  + i);
+    const rEl = document.getElementById('axial-row-'   + i);
+    if (!vEl || !pEl || !cEl || !rEl) continue;
+
+    vEl.style.background = voidColor(vf[i]);
+    // Power bar: width ∝ shape value, max at value=1.5 → 20px
+    pEl.style.width = Math.round(Math.min(ps[i] / 1.5, 1.0) * 20) + 'px';
+
+    if (fbSet.has(i)) cEl.classList.add('film-boil');
+    else              cEl.classList.remove('film-boil');
+
+    // Hover tooltip
+    rEl.title =
+      'Node ' + i +
+      ' | void: ' + vf[i].toFixed(2) +
+      ' | T_fuel: ' + tfAx[i].toFixed(0) + '\u00b0C' +
+      ' | T_cool: ' + tcAx[i].toFixed(0) + '\u00b0C' +
+      ' | q: ' + ((hf[i] || 0) / 1e6).toFixed(2) + ' MW/m\u00b2';
+  }
+
+  // Worst boiling regime across all nodes → colored status text
+  const ORDER = ['single_phase', 'subcooled_boiling', 'nucleate_boiling', 'film_boiling'];
+  let worst = 'single_phase';
+  rgms.forEach(r => { if (ORDER.indexOf(r) > ORDER.indexOf(worst)) worst = r; });
+  const regEl = document.getElementById('axialRegime');
+  if (regEl) {
+    regEl.textContent = 'REGIME: ' + worst.replace(/_/g, ' ').toUpperCase();
+    regEl.style.color =
+      worst === 'film_boiling'      ? 'var(--red)'    :
+      worst === 'nucleate_boiling'  ? 'var(--yellow)' :
+      worst === 'subcooled_boiling' ? 'var(--cyan)'   : 'var(--green)';
+  }
+}
+
+// ─── PHASE 2: DNBR GAUGE ─────────────────────────────────────────────────────
+// Same arc geometry as pressure gauge (cx=60,cy=60,r=46), 270° sweep, range 0–4.0
+const DNBR_G = { cx: 60, cy: 60, r: 46, s: 225, e: 495, max: 4.0 };
+function dnbrAng(v) {
+  return DNBR_G.s + (Math.min(Math.max(v, 0), DNBR_G.max) / DNBR_G.max) * (DNBR_G.e - DNBR_G.s);
+}
+
+function initDnbrGauge() {
+  const g = DNBR_G;
+  document.getElementById('dnbrBg').setAttribute('d', arcD(g.s, g.e, g.cx, g.cy, g.r));
+  // Color zone arcs: red 0–1.17, orange 1.17–1.3, yellow 1.3–2.0, green 2.0–4.0
+  const a117 = dnbrAng(1.17), a13 = dnbrAng(1.3), a20 = dnbrAng(2.0);
+  document.getElementById('dnbrZR').setAttribute('d', arcD(g.s, a117,  g.cx, g.cy, g.r));
+  document.getElementById('dnbrZO').setAttribute('d', arcD(a117, a13,   g.cx, g.cy, g.r));
+  document.getElementById('dnbrZY').setAttribute('d', arcD(a13,  a20,   g.cx, g.cy, g.r));
+  document.getElementById('dnbrZG').setAttribute('d', arcD(a20,  g.e,   g.cx, g.cy, g.r));
+  updateDnbrGauge({ dnbr: 2.5, fuel_damage: false });
+}
+
+function updateDnbrGauge(s) {
+  const val = (s.dnbr != null) ? s.dnbr : 2.5;
+  // Needle tip at r−14=32 to stay inside the stroke band (stroke-width=16, band 38–54)
+  const np = ang2xy(dnbrAng(Math.min(Math.max(val, 0), DNBR_G.max)),
+                    DNBR_G.cx, DNBR_G.cy, DNBR_G.r - 14);
+  const needle = document.getElementById('dnbrNeedle');
+  if (needle) { needle.setAttribute('x2', np.x.toFixed(1)); needle.setAttribute('y2', np.y.toFixed(1)); }
+
+  const col = val < 1.17 ? '#ff1744' : val < 1.3 ? '#ff6d00' : val < 2.0 ? '#ffd600' : '#00e676';
+  const valEl = document.getElementById('dnbrVal');
+  if (valEl) { valEl.textContent = val.toFixed(2); valEl.setAttribute('fill', col); }
+
+  // Pulse card background red when fuel_damage is set (irreversible state)
+  const card = document.getElementById('dnbrCard');
+  if (card) {
+    if (s.fuel_damage) card.classList.add('fuel-damage');
+    else               card.classList.remove('fuel-damage');
+  }
+}
+
+// ─── INIT ─────────────────────────────────────────────────────────────────────
+(function initPowerGauge() {
+  const cfg = PG;
+  document.getElementById('pgBg').setAttribute('d', arcD(cfg.s, cfg.e, cfg.cx, cfg.cy, cfg.r));
+  const a100 = pgAng(100), a110 = pgAng(110);
+  document.getElementById('pgZG').setAttribute('d', arcD(cfg.s, a100, cfg.cx, cfg.cy, cfg.r));
+  document.getElementById('pgZY').setAttribute('d', arcD(a100, a110, cfg.cx, cfg.cy, cfg.r));
+  document.getElementById('pgZR').setAttribute('d', arcD(a110, cfg.e, cfg.cx, cfg.cy, cfg.r));
+  const tp = ang2xy(a100, cfg.cx, cfg.cy, cfg.r);
+  const ti = ang2xy(a100, cfg.cx, cfg.cy, cfg.r - 20);
+  document.getElementById('pgTick100').setAttribute('x1', tp.x);
+  document.getElementById('pgTick100').setAttribute('y1', tp.y);
+  document.getElementById('pgTick100').setAttribute('x2', ti.x);
+  document.getElementById('pgTick100').setAttribute('y2', ti.y);
+})();
+
+(function initPressureGauge() {
+  const cfg = PR;
+  document.getElementById('prBg').setAttribute('d', arcD(cfg.s, cfg.e, cfg.cx, cfg.cy, cfg.r));
+  const a120 = prAng(120), a170 = prAng(170);
+  document.getElementById('prZY').setAttribute('d', arcD(cfg.s,  a120, cfg.cx, cfg.cy, cfg.r));
+  document.getElementById('prZG').setAttribute('d', arcD(a120, a170, cfg.cx, cfg.cy, cfg.r));
+  document.getElementById('prZR').setAttribute('d', arcD(a170, cfg.e, cfg.cx, cfg.cy, cfg.r));
+})();
+
+initAlarms();
+updateDesc();
+updatePowerGauge(100);
+updatePressureGauge(155);
+initAxialMap();
+initDnbrGauge();
+connectWS();
+</script>
+</body>
+</html>
 

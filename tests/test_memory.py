@@ -4,7 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from semantic_telephone.memory import InvalidMemoryResponse, MemoryStore
+from semantic_telephone.memory import (
+    InvalidMemoryResponse,
+    MemoryStore,
+    validate_memory_payload,
+)
 
 
 def test_memory_decay_and_repetition(tmp_path: Path) -> None:
@@ -34,9 +38,15 @@ def test_memory_rejects_invalid_json(tmp_path: Path) -> None:
         store.ingest_json("not json", 1, provenance="damaged")
 
 
+def test_memory_rejects_invalid_observation_schema() -> None:
+    with pytest.raises(InvalidMemoryResponse, match="confidence"):
+        validate_memory_payload(
+            '{"observations":[{"entity_key":"variant:x","text":"seen"}]}'
+        )
+
+
 def test_memory_clear(tmp_path: Path) -> None:
     store = MemoryStore(tmp_path / "memory")
     store.ingest_json('{"observations":[]}', 1, provenance="damaged")
     store.clear()
     assert store.items == []
-

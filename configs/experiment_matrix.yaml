@@ -2,6 +2,7 @@ experiment:
   name: baseline-comparison
   repetitions: 1
   seeds: [100]
+  concurrency: 2
 variants:
   - name: translation-only
     config: translate_only.yaml
@@ -13,4 +14,3 @@ variants:
     config: rolling_context.yaml
   - name: inferred-memory
     config: inferred_memory.yaml
-

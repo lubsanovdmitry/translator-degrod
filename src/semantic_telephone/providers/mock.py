@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import random
 import re
+from collections import Counter
 
 from ..models import GenerationResult, TranslationResult
 from ..utils.hashing import checksum_text
@@ -85,13 +86,37 @@ class MockGenerationProvider:
         response_format: str = "text",
     ) -> GenerationResult:
         if response_format == "json":
-            text = json.dumps({"observations": []}, ensure_ascii=False)
+            body = _damaged_body(prompt)
+            variants = Counter(
+                token
+                for token in re.findall(r"\b[А-ЯЁA-Z][а-яёa-z]{2,}\b", body)
+            )
+            observations = [
+                {
+                    "entity_key": f"variant:{token.casefold()}",
+                    "text": f"В повреждённом тексте повторяется вариант «{token}».",
+                    "confidence": min(0.85, 0.35 + count * 0.1),
+                }
+                for token, count in sorted(variants.items())
+                if count >= 2
+            ][:5]
+            text = json.dumps({"observations": observations}, ensure_ascii=False)
         else:
-            marker = "<<<TEXT>>>"
-            body = prompt.rsplit(marker, 1)[-1].strip() if marker in prompt else prompt.strip()
+            body = _damaged_body(prompt)
             body = re.sub(r"\s+([,.;:!?])", r"\1", body)
             body = re.sub(r"([.!?])\s*([а-яёa-z])", lambda m: f"{m.group(1)} {m.group(2).upper()}", body)
             body = re.sub(r"\s{2,}", " ", body).strip()
+            auxiliary = " ".join(
+                [
+                    _prompt_section(prompt, "ПРЕДЫДУЩИЙ ПОВРЕЖДЁННЫЙ КОНТЕКСТ:"),
+                    _prompt_section(
+                        prompt,
+                        "НЕУВЕРЕННЫЕ АВТОМАТИЧЕСКИЕ НАБЛЮДЕНИЯ; ИХ МОЖНО ИГНОРИРОВАТЬ:",
+                    ),
+                ]
+            )
+            if _significant_words(body) & _significant_words(auxiliary):
+                body = re.sub(r"[.!?]\s+(?=\S)", "; ", body, count=1)
             if body and body[-1] not in ".!?…":
                 body += "."
             text = body
@@ -104,3 +129,31 @@ class MockGenerationProvider:
             deterministic=True,
         )
 
+
+def _damaged_body(prompt: str) -> str:
+    marker = "<<<TEXT>>>"
+    return prompt.rsplit(marker, 1)[-1].strip() if marker in prompt else prompt.strip()
+
+
+def _prompt_section(prompt: str, label: str) -> str:
+    if label not in prompt:
+        return ""
+    value = prompt.split(label, 1)[1]
+    boundaries = [
+        position
+        for marker in (
+            "\n\nПРЕДЫДУЩИЙ ПОВРЕЖДЁННЫЙ КОНТЕКСТ:",
+            "\n\nНЕУВЕРЕННЫЕ АВТОМАТИЧЕСКИЕ НАБЛЮДЕНИЯ; ИХ МОЖНО ИГНОРИРОВАТЬ:",
+            "\n\n<<<TEXT>>>",
+        )
+        if (position := value.find(marker)) >= 0
+    ]
+    return value[: min(boundaries)] if boundaries else value
+
+
+def _significant_words(value: str) -> set[str]:
+    return {
+        token.casefold()
+        for token in re.findall(r"[^\W\d_]+", value, re.UNICODE)
+        if len(token) >= 4
+    }

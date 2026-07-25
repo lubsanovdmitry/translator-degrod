@@ -11,20 +11,148 @@
 исходного текста и настроек. Метрики являются диагностическими эвристиками, а
 не объективной оценкой текста или доказательством научного эффекта.
 
-## Быстрый старт без сети
+## Реальный запуск
 
 Требуется Python 3.12 или новее.
 
+Установите проект и библиотеки, необходимые для запуска локальных MT-моделей:
+
 ```bash
-python3.12 -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
+pip install -e '.[local-mt]'
+cp -n .env.example .env
+```
+
+Эта команда **не скачивает веса переводчиков**. Она устанавливает `torch`,
+`transformers`, `sentencepiece` и `sacremoses`. Веса скачиваются лениво только
+командой `run`, когда конкретный движок впервые выбран для перехода.
+`validate` ничего не скачивает.
+
+Откройте `.env` и заполните:
+
+```env
+OPENROUTER_API_KEY=ваш-ключ
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+OPENROUTER_MODEL=provider/model-name
+```
+
+Конкретная OpenRouter-модель не зашита в проект. `OPENROUTER_MODEL` используется
+для LLM-сводки отчёта и как default для задач без собственного `model` в YAML.
+
+Поместите свой текст в корневой `input.txt`, затем запустите реальный NLLB
+baseline:
+
+```bash
+semantic-telephone validate configs/nllb_only.yaml
+semantic-telephone run configs/nllb_only.yaml --verbose
+```
+
+Это настоящий запуск:
+
+- `facebook/nllb-200-distilled-600M` переводит все переходы маршрута;
+- при доступной CUDA модель использует GPU и FP16, иначе CPU;
+- первый запуск скачивает модель с Hugging Face и поэтому требует сеть;
+- OpenRouter создаёт диагностическую сводку отчёта;
+- финальный текст, каждый переход, сегменты, модели и метаданные сохраняются в
+  напечатанном CLI каталоге `runs/...-nllb-only/`.
+
+Откройте результат:
+
+```bash
+cat runs/...-nllb-only/final.txt
+semantic-telephone inspect runs/...-nllb-only --chunk 1
+```
+
+Вместо `...` используйте точный путь, напечатанный командой `run`.
+
+Для основного смешанного эксперимента:
+
+```bash
+semantic-telephone validate configs/mixed_local.yaml
+semantic-telephone run configs/mixed_local.yaml --verbose
+```
+
+`mixed_local` действительно использует NLLB, M2M100 и явно перечисленные
+OPUS-MT пары, а OpenRouter выполняет reconstruction и формирует сводку отчёта.
+На первом запуске нужные модели скачиваются до соответствующего перевода.
+Загрузка OPUS ограничена таблицей `pairs`; произвольные угаданные pair-модели
+этот профиль не скачивает. Понадобится заметно больше времени, RAM/VRAM и места
+в model cache, чем для `nllb_only`.
+
+### Сравнение режимов реконструкции
+
+Исходный `mixed_local.yaml` сохранён без изменения поведения и считается
+legacy-вариантом агрессивной реконструкции. Для контролируемого сравнения
+добавлены четыре явных профиля. У них совпадают вход, chunking, seed, языковой
+маршрут, набор MT-провайдеров и engine routing, поэтому этап перевода перед
+LLM одинаков:
+
+| Профиль | Обработка после MT | Основные ограничения |
+|---|---|---|
+| `raw_translation` | Нет LLM, включая LLM-сводку отчёта | Контрольный повреждённый перевод |
+| `grammar_repair` | Только грамматика, `temperature: 0.1` | `max_length_ratio: 1.05`, без новых событий |
+| `conservative_reconstruction` | Короткие локальные связки, `temperature: 0.35` | ratio `1.15`, не более двух новых предложений, повторы сохраняются |
+| `aggressive_reconstruction` | Расширяющая реконструкция, `temperature: 0.7` | ratio `2.5`, повторы рационализируются, расширение сцен разрешено |
+
+Консервативный prompt запрещает превращать повторы в отдельную атмосферную
+сцену, изобретать конфликт или сверхъестественное объяснение, заменять
+конкретную бессмыслицу философскими рассуждениями и стилистически выравнивать
+разнородные части текста. Параметры режима входят в resolved config и checksum
+этапа. Если провайдер нарушит ratio или лимит новых предложений, результат
+сохранится для анализа, а нарушение попадёт в warnings.
+
+Запустить все варианты с одним seed и получить общую таблицу:
+
+```bash
+semantic-telephone matrix configs/mixed_local_reconstruction_matrix.yaml
+```
+
+Этот matrix — реальный эксперимент: ему нужны локальные MT-зависимости, сеть
+для первой загрузки весов и `OPENROUTER_API_KEY` для трёх LLM-вариантов.
+
+### Что именно скачивается
+
+NLLB и M2M100 — по одной многоязычной модели, а не по модели на каждый язык.
+OPUS-MT, наоборот, использует отдельные модели для языковых пар.
+
+| Профиль | Локальные веса при первом использовании |
+|---|---|
+| `nllb_only` | Только `facebook/nllb-200-distilled-600M` |
+| `m2m100_only` | Только `facebook/m2m100_418M` |
+| `pairwise_opus` | Четыре явно указанные OPUS-модели для `ru-en`, `en-ru`, `en-de`, `de-en` |
+| `mixed_local` | NLLB, M2M100 и только те явно указанные OPUS-пары, которые потребовались seeded engine route |
+| `raw_translation`, `grammar_repair`, `conservative_reconstruction`, `aggressive_reconstruction` | Тот же локальный MT-набор, что у `mixed_local` |
+| `mixed_with_libretranslate` | То же, но LibreTranslate вызывается по HTTP и локальных весов в этот проект не добавляет |
+
+OpenRouter-модель локально не скачивается: она вызывается через API.
+
+Обычно Hugging Face хранит скачанные веса в
+`~/.cache/huggingface/hub`. Путь можно перенести, задав `HF_HOME` до запуска.
+На следующих запусках `transformers` использует cache. Во время выполнения
+выбранные NLLB/M2M100 загружаются из cache в RAM и, при доступной CUDA, в VRAM.
+OPUS держит в памяти ограниченное число pair-моделей и вытесняет старые из
+VRAM; это не удаляет их с диска.
+
+Для собственного файла и отдельного каталога удобнее скопировать профиль,
+изменить `input.path`, `run.name`, языковой маршрут и параметры движков, затем
+запустить копию той же командой.
+
+## Проверка установки — только mock, не настоящий перевод
+
+Следующая команда нужна исключительно как быстрый smoke test CLI, checkpoint,
+маршрутов и файлов результатов:
+
+```bash
 pip install -e .
 semantic-telephone validate configs/translate_only.yaml
 semantic-telephone run configs/translate_only.yaml
 ```
 
-Оба mock-провайдера работают без API-ключей и сети. Пример `input.txt` написан
-специально для проекта. После запуска CLI напечатает путь к каталогу в `runs/`.
+`translate_only.yaml` использует `MockTranslationProvider`. Он не знает языков
+и не выполняет машинный перевод: это детерминированная тестовая порча текста.
+Его результат не следует оценивать как результат работы NLLB, M2M100, OPUS-MT
+или LibreTranslate.
 
 Для разработки:
 
@@ -36,7 +164,8 @@ mypy
 ```
 
 Команда `semantic-telephone init my-experiment` создаст неразрушающим образом
-пустой `input.txt`, `.env`, стартовую конфигурацию и короткую инструкцию.
+пустой `input.txt`, `.env` и mock-конфигурацию для smoke test. Для реального
+перевода скопируйте один из real-профилей, описанных выше.
 
 ## Пять режимов
 
@@ -51,8 +180,10 @@ mypy
 - `inferred_memory` — экспериментальная автоматически извлекаемая память с
   decay. Этот режим выключен по умолчанию.
 
-Готовые конфигурации находятся в [`configs/`](configs). Они используют
-mock-провайдеры, поэтому подходят для проверки установки.
+Исходные пять pipeline-конфигураций используют mock-провайдеры и предназначены
+для проверки механики эксперимента. Реальные MT-профили имеют суффиксы
+`nllb_only`, `m2m100_only`, `pairwise_opus`, `mixed_local` и
+`mixed_with_libretranslate`.
 
 ## Конфигурация
 
@@ -141,34 +272,115 @@ seed. Категории в `stratified` — удобная эксперимен
 
 ## Реальные провайдеры
 
-Перевод поддерживает LibreTranslate-совместимый endpoint:
+Библиотеки для локальных NLLB, M2M100 и OPUS-MT устанавливаются отдельным
+набором зависимостей:
 
-```yaml
-translation:
-  provider: libretranslate
-  base_url: http://localhost:5000
-  api_key_env: SEMANTIC_TELEPHONE_TRANSLATION_API_KEY
-  route_mode: fixed
-  languages: [ru, de, en, ru]
+```bash
+pip install -e '.[local-mt]'
 ```
 
-Генерация поддерживает OpenAI-compatible Chat Completions API:
+Этот extra устанавливает runtime-зависимости, но не веса моделей. Веса
+загружаются `transformers.from_pretrained()` лениво при фактическом выборе
+провайдера и затем переиспользуются из Hugging Face cache.
+
+NLLB и M2M100 используют `transformers` напрямую, CUDA/FP16 при наличии и CPU
+fallback. Длинные предложения режутся по токенам ниже `max_input_tokens`;
+параметры и результат каждого сегмента сохраняются в checkpoint и
+`events.jsonl`. Real-профили ограничивают каждый результат сегмента
+`max_new_tokens: 512` и запрещают повтор одной и той же 3-граммы, чтобы greedy
+decoding не раздувал единичную ошибку в сотни одинаковых слов. OPUS-MT выбирает
+отдельную Marian-модель по паре, умеет идти
+через английский hub и держит ограниченный LRU-кэш моделей. При
+`allow_downloads: false` принимаются только явно перечисленные и уже локально
+доступные модели. Сочетание `allow_downloads: true` и
+`configured_pairs_only: true` разрешает первый download, но только для
+перечисленных в `pairs` моделей. Preflight выполняется до первого перевода
+соответствующего маршрута.
+
+Языковой маршрут и маршрут движков настраиваются независимо. Доступны
+`single_engine`, `fixed_engine_route`, `weighted_random`, `alternating`,
+`quality_fallback` и `heterogeneous`; все случайные решения зависят от seed.
+`quality_fallback` сохраняет ошибки неудачных движков и фактически выбранный
+provider. `LibreTranslateProvider` проверяет `/languages`, кэширует ответ,
+вызывает `/translate`, повторяет временные ошибки и записывает версию сервера,
+если она опубликована в заголовках.
+
+Рекомендуемый экспериментальный профиль — `configs/mixed_local.yaml`.
+`configs/nllb_only.yaml` остаётся чистой baseline-конфигурацией. Также доступны
+`m2m100_only.yaml`, `pairwise_opus.yaml`, `mixed_with_libretranslate.yaml` и
+интерфейсный `commercial_baseline.yaml`. Клиенты коммерческих MT в первой
+версии оставлены явными заглушками категории `commercial_nmt`.
+
+Грамматический ремонт, реконструкция, извлечение памяти и LLM-сводка отчёта
+используют OpenRouter. Модель и generation-параметры можно менять отдельно для
+каждой задачи:
 
 ```yaml
 generation:
-  provider: openai_compatible
-  base_url: https://example.invalid/v1
-  api_key_env: SEMANTIC_TELEPHONE_OPENAI_API_KEY
-  model: configured-model
+  provider: openrouter
+  api_key_env: OPENROUTER_API_KEY
+  tasks:
+    conservative_repair:
+      model: vendor/repair-model
+      max_tokens: 1200
+      parameters: {top_p: 0.9}
+    reconstruction:
+      model: vendor/reconstruction-model
+      max_tokens: 1800
+    contextual_reconstruction:
+      model: vendor/context-model
+      max_tokens: 2000
+    memory_extraction:
+      model: vendor/json-model
+      max_tokens: 1000
+    report_generation:
+      model: vendor/report-model
+      max_tokens: 1200
+  temperature:
+    conservative_repair: 0.2
+    reconstruction: 0.6
+    contextual_reconstruction: 0.6
+    memory_extraction: 0.1
+    report_generation: 0.2
 ```
 
-Секреты читаются только из окружения или `.env`; сам `.env` включён в
-`.gitignore`. Endpoint, имя модели, response ID, usage, хеши промптов и
-входов/выходов записываются в артефакты. Реальный API может быть
-недетерминированным, даже если принимает `seed`; manifest явно отмечает это.
-Timeout, пустые ответы и ошибки провайдера проходят через exponential backoff.
-После исчерпания попыток `failure_policy: stop` сохраняет ошибку и останавливает
-запуск, а `skip` сохраняет предупреждение и продолжает с предыдущим текстом.
+`OPENROUTER_BASE_URL` по умолчанию равен
+`https://openrouter.ai/api/v1`, а `OPENROUTER_MODEL` служит моделью по умолчанию
+для задач без собственного `model`. Для LibreTranslate используются
+`LIBRETRANSLATE_BASE_URL` и необязательный `LIBRETRANSLATE_API_KEY`. Секреты
+читаются только из окружения или `.env`; endpoint, точные модели/revision,
+response ID, usage, хеши и фактический маршрут движков записываются в
+артефакты.
+
+### OpenRouter вернул `200 OK`, но текста нет
+
+Reasoning-модель может потратить весь `max_tokens` на reasoning и завершиться с
+`finish_reason: length`, `message.content: null`. HTTP-запрос при этом формально
+успешен. `exclude: true` только исключает reasoning из ответа, но не отключает
+его и не экономит output tokens. Кроме того, не все модели поддерживают
+`reasoning.effort`. Поэтому стандартные real-профили явно отключают reasoning
+для служебных задач и дают reconstruction 4096 output tokens:
+
+```yaml
+generation:
+  provider: openrouter
+  parameters:
+    reasoning: {enabled: false}
+  tasks:
+    reconstruction: {max_tokens: 4096}
+```
+
+Если конкретной задаче действительно нужен reasoning, переопределите
+`generation.tasks.<task>.parameters.reasoning` согласно возможностям выбранной
+модели и увеличьте `max_tokens`: reasoning входит в output budget.
+
+Клиент выводит `finish_reason`, тип content, возвращён ли reasoning, и token usage,
+не сохраняя полный приватный ответ. Ответ без финального текста считается
+non-retryable: тот же платный запрос не отправляется ещё четыре раза.
+
+После изменения YAML запускайте новую команду `run`. Обычный `resume` намеренно
+использует resolved config старого запуска, поэтому сохранит прежний token
+budget.
 
 ## CLI
 
@@ -227,10 +439,26 @@ runs/<timestamp>-<name>/
 промпт. Контекст называется ненадёжным: реконструктор вправе его игнорировать и
 не обязан поддерживать возникшие мотивы.
 
-Чтобы исключить причинную неоднозначность, обработка с rolling context и
-памятью сейчас идёт последовательно. `runtime.concurrency` зарезервирован для
-независимых, не-контекстных API-задач; первая версия не запускает файловый
-конвейер параллельно.
+Независимые блоки без rolling context и памяти обрабатываются ограниченным
+числом задач из `runtime.concurrency`. Этапы внутри блока и переходы языкового
+маршрута остаются последовательными, а финальный текст, маршруты, warnings и
+`processed_chunks` собираются в исходном порядке независимо от порядка
+завершения задач.
+
+Чтобы исключить причинную неоднозначность, при включённом rolling context или
+памяти эффективная параллельность блоков автоматически снижается до `1`. Она
+записывается в manifest как `effective_chunk_concurrency`, а снижение
+появляется в warnings отчёта. Локальные Transformers-модели также допускают
+только один inference на экземпляр модели: это защищает загрузку, RNG,
+tokenizer и VRAM, хотя независимые сетевые этапы других блоков могут
+продолжаться параллельно.
+
+Если engine router содержит OPUS-MT, preflight и все переходы одного языкового
+маршрута защищаются общей блокировкой. Это не даёт preflight другого блока
+вытеснить модель пары из ограниченного LRU-кэша до её использования. Остальные
+этапы блоков, включая OpenRouter reconstruction, по-прежнему могут идти
+параллельно. Manifest отмечает этот режим полем
+`translation_routes_serialized`.
 
 ## Автоматическая память
 
@@ -261,6 +489,12 @@ semantic-telephone matrix configs/experiment_matrix.yaml
 каталоги запусков, `summary.json`, `summary.csv` и общий `report.md` со ссылками
 на финальные тексты. Usage агрегируется в файлах этапов; денежная стоимость
 показывается только если провайдер её вернул.
+
+`experiment.concurrency` задаёт максимальное число одновременно выполняемых
+запусков матрицы (по умолчанию `1`). Строки summary сохраняют порядок вариантов
+и seed из YAML. Этот лимит умножается на `runtime.concurrency` каждого запуска,
+поэтому для локальных MT-моделей его следует повышать только при достаточном
+объёме RAM/VRAM.
 
 ## Метрики и воспроизводимость
 
@@ -303,12 +537,10 @@ checkpoint checksum.
   языковой пары остаётся ответственностью переводческого endpoint.
 - Rate-limit budget хранится в конфигурации и manifest, но отдельный глобальный
   планировщик запросов пока не реализован.
-- `fallback_provider` предусмотрен моделью конфигурации, но автоматическое
-  переключение требует пользовательской фабрики и пока не реализовано; доступны
-  безопасные политики `stop` и `skip`.
+- Коммерческие MT-клиенты пока представлены интерфейсными заглушками; локальные
+  провайдеры и LibreTranslate реализованы полностью.
 - Семантические embedding-метрики и расчёт денежной стоимости опциональны и в
   mock-режиме отсутствуют.
 
 Архитектура намеренно файловая и локальная: без очередей, базы данных,
 микросервисов и веб-интерфейса.
-

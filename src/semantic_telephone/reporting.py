@@ -13,6 +13,15 @@ MODE_DESCRIPTIONS = {
     "iterative_reconstruction": "Alternating translation and moderate local reconstruction.",
     "rolling_context": "Reconstruction with a limited tail of prior damaged outputs.",
     "inferred_memory": "Experimental reconstruction with fallible automatically extracted memory.",
+    "raw_translation": "Mixed local MT output without any LLM stage.",
+    "grammar_repair": "Mixed local MT followed only by constrained grammar repair.",
+    "conservative_reconstruction": (
+        "Mixed local MT followed by reconstruction without scene expansion."
+    ),
+    "aggressive_reconstruction": (
+        "Mixed local MT followed by permissive scene-expanding reconstruction."
+    ),
+    "mixed_local": "Legacy mixed local profile; its reconstruction behavior is unchanged.",
 }
 
 
@@ -35,7 +44,20 @@ def create_report(
         f"- Mode: `{config['name']}`",
         f"- Seed: `{config['seed']}`",
         f"- Source/target: `{config['source_language']}` → `{config['target_language']}`",
-        f"- Translation provider: `{config['translation']['provider']}`",
+        (
+            "- Translation provider(s): `"
+            + (
+                ", ".join(config["translation"].get("providers", {}))
+                if config["translation"].get("providers")
+                else config["translation"]["provider"]
+            )
+            + "`"
+        ),
+        (
+            "- Engine routing: `"
+            + config["translation"].get("engine_routing", {}).get("mode", "single_engine")
+            + "`"
+        ),
         f"- Generation provider: `{config['generation']['provider']}`",
         f"- Memory enabled: `{config['memory']['enabled']}`",
         "",
@@ -130,15 +152,19 @@ def regenerate_report(run_directory: Path) -> Path:
     manifest = read_json(run_directory / "manifest.json")
     metrics = read_json(run_directory / "metrics.json")
     routes: list[list[str]] = []
+    warnings: list[str] = []
     for stage_path in sorted((run_directory / "chunks").glob("*/stage-*.json")):
         stage = read_json(stage_path)
         route = stage.get("route")
         if isinstance(route, list) and route:
             routes.append([str(item) for item in route])
+        stage_warnings = stage.get("warnings")
+        if isinstance(stage_warnings, list):
+            warnings.extend(str(item) for item in stage_warnings)
     return create_report(
         run_directory,
         config=manifest["resolved_config"],
         metrics=metrics,
         routes=routes,
-        warnings=[],
+        warnings=sorted(set(warnings)),
     )

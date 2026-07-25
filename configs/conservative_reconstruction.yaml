@@ -1,0 +1,71 @@
+run:
+  name: conservative_reconstruction
+  seed: 1080
+  source_language: en
+  target_language: ru
+  output_root: runs
+input: {path: ../input.txt, encoding: utf-8}
+chunking: {strategy: target_chars, target_chars: 900, max_chars: 1800}
+translation:
+  default_provider: nllb
+  route_mode: fixed
+  languages: [en, ar, en, de, tr, en, ru]
+  providers:
+    nllb:
+      type: nllb
+      model: facebook/nllb-200-distilled-600M
+      device: auto
+      dtype: auto
+      max_input_tokens: 450
+      decoding: {mode: greedy, num_beams: 1, max_new_tokens: 512, no_repeat_ngram_size: 3}
+    m2m100:
+      type: m2m100
+      model: facebook/m2m100_418M
+      device: auto
+      dtype: auto
+      max_input_tokens: 450
+      decoding: {mode: greedy, num_beams: 1, max_new_tokens: 512, no_repeat_ngram_size: 3}
+    opus:
+      type: opus_mt
+      decoding: {mode: greedy, num_beams: 1, max_new_tokens: 512, no_repeat_ngram_size: 3}
+      allow_downloads: true
+      configured_pairs_only: true
+      fallback_hub_language: en
+      pairs:
+        ru-en: Helsinki-NLP/opus-mt-ru-en
+        en-ru: Helsinki-NLP/opus-mt-en-ru
+        en-de: Helsinki-NLP/opus-mt-en-de
+        de-en: Helsinki-NLP/opus-mt-de-en
+        tr-en: Helsinki-NLP/opus-mt-tr-en
+        ar-en: Helsinki-NLP/opus-mt-ar-en
+        en-ar: Helsinki-NLP/opus-mt-en-ar
+  engine_routing:
+    mode: heterogeneous
+    avoid_same_engine_consecutively: true
+    weights: {nllb: 0.50, m2m100: 0.25, opus: 0.20}
+    fallback_order: [nllb, m2m100, opus]
+generation:
+  provider: openrouter
+  api_key_env: OPENROUTER_API_KEY
+  parameters:
+    reasoning: {enabled: false}
+  tasks:
+    reconstruction: {max_tokens: 4096}
+    report_generation: {max_tokens: 2048}
+  temperature:
+    reconstruction: 0.35
+    report_generation: 0.2
+prompts:
+  reconstruction: ../prompts/restrained_reconstruction.txt
+context: {enabled: false}
+memory: {enabled: false}
+pipeline:
+  - type: translation_cycle
+  - type: reconstruction
+    max_length_ratio: 1.15
+    max_new_sentences_per_chunk: 2
+    repetition_policy: preserve
+    allow_new_events: false
+    allow_scene_expansion: false
+  - type: final_translation
+runtime: {concurrency: 8, retries: 4, retry_backoff_seconds: 2, resume: true, failure_policy: stop}

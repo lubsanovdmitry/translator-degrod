@@ -1,0 +1,13 @@
+experiment:
+  name: mixed-local-reconstruction-comparison
+  repetitions: 1
+  seeds: [1080]
+variants:
+  - name: raw-translation
+    config: raw_translation.yaml
+  - name: grammar-repair
+    config: grammar_repair.yaml
+  - name: conservative-reconstruction
+    config: conservative_reconstruction.yaml
+  - name: aggressive-reconstruction
+    config: aggressive_reconstruction.yaml

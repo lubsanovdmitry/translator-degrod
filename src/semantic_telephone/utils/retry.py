@@ -8,6 +8,19 @@ class EmptyProviderResponse(RuntimeError):
     pass
 
 
+class NonRetryableProviderError(RuntimeError):
+    """A valid provider response that the same request cannot repair by retrying."""
+
+    attempts: int = 1
+
+
+def _record_attempt(error: Exception, attempt: int) -> None:
+    try:
+        error.__dict__["attempts"] = attempt
+    except AttributeError:
+        pass
+
+
 async def with_retry[T](
     operation: Callable[[], Awaitable[T]],
     *,
@@ -22,8 +35,11 @@ async def with_retry[T](
             if isinstance(text, str) and not text.strip():
                 raise EmptyProviderResponse("provider returned an empty response")
             return result, attempt
-        except Exception as error:  # noqa: BLE001 - provider adapters can raise vendor exceptions
+        except Exception as error:
             last_error = error
+            _record_attempt(error, attempt)
+            if isinstance(error, NonRetryableProviderError):
+                raise
             if attempt < retries:
                 await asyncio.sleep(backoff_seconds * 2 ** (attempt - 1))
     assert last_error is not None

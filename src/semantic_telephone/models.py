@@ -16,13 +16,30 @@ class StageType(StrEnum):
 
 
 @dataclass(slots=True)
+class EngineRoutingConfig:
+    mode: str = "single_engine"
+    provider: str | None = None
+    route: list[str] = field(default_factory=list)
+    pairs: dict[str, str] = field(default_factory=dict)
+    weights: dict[str, float] = field(default_factory=dict)
+    fallback_order: list[str] = field(default_factory=list)
+    avoid_same_engine_consecutively: bool = False
+
+
+@dataclass(slots=True)
 class ProviderConfig:
     provider: str = "mock"
+    enabled: bool = True
     base_url: str | None = None
     model: str = "mock"
+    revision: str | None = None
     api_key_env: str | None = None
     timeout_seconds: float = 60.0
     options: dict[str, Any] = field(default_factory=dict)
+    default_provider: str | None = None
+    providers: dict[str, ProviderConfig] = field(default_factory=dict)
+    tasks: dict[str, ProviderConfig] = field(default_factory=dict)
+    engine_routing: EngineRoutingConfig = field(default_factory=EngineRoutingConfig)
 
 
 @dataclass(slots=True)
@@ -108,7 +125,13 @@ class RunConfig:
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
     pipeline: list[PipelineStageConfig] = field(default_factory=list)
     temperatures: dict[str, float] = field(
-        default_factory=lambda: {"repair": 0.3, "reconstruction": 0.7, "memory_extraction": 0.1}
+        default_factory=lambda: {
+            "conservative_repair": 0.3,
+            "reconstruction": 0.7,
+            "contextual_reconstruction": 0.7,
+            "memory_extraction": 0.1,
+            "report_generation": 0.2,
+        }
     )
     custom_prompts: dict[str, str] = field(default_factory=dict)
     config_path: str | None = None
@@ -138,6 +161,7 @@ class TranslationResult:
     usage: dict[str, int | float] | None = None
     warnings: list[str] = field(default_factory=list)
     deterministic: bool | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -172,6 +196,10 @@ class StageResult:
     applied: bool = True
     response_id: str | None = None
     prompt_checksum: str | None = None
+    execution_succeeded: bool = True
+    checkpoint_reusable: bool = True
+    provider_route: list[str] = field(default_factory=list)
+    translation_details: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -191,6 +219,8 @@ class RunManifest:
     custom_prompts: bool
     prompt_checksums: dict[str, str]
     deterministic: bool
+    translation_models: list[dict[str, Any]] = field(default_factory=list)
+    report_generation: dict[str, Any] | None = None
     completed_at: str | None = None
 
     @classmethod
@@ -215,8 +245,20 @@ class RunManifest:
             metrics={},
             custom_prompts=bool(config.custom_prompts),
             prompt_checksums=prompt_checksums,
-            deterministic=config.translation.provider == "mock"
-            and config.generation.provider == "mock",
+            deterministic=(
+                (
+                    all(
+                        provider.provider == "mock"
+                        for provider in config.translation.providers.values()
+                    )
+                    if config.translation.providers
+                    else config.translation.provider == "mock"
+                )
+                and config.generation.provider == "mock"
+                and all(
+                    provider.provider == "mock" for provider in config.generation.tasks.values()
+                )
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:

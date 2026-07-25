@@ -1,0 +1,31 @@
+run:
+  name: commercial_baseline
+  seed: 1080
+  source_language: ru
+  target_language: ru
+  output_root: runs
+input: {path: ../input.txt, encoding: utf-8}
+chunking: {strategy: target_chars, target_chars: 900, max_chars: 1800}
+translation:
+  default_provider: commercial
+  route_mode: fixed
+  languages: [ru, en, de, tr, en, ru]
+  providers:
+    commercial:
+      type: google_cloud
+      category: commercial_nmt
+  engine_routing: {mode: single_engine, provider: commercial}
+generation:
+  provider: openrouter
+  api_key_env: OPENROUTER_API_KEY
+  parameters:
+    reasoning: {enabled: false}
+  tasks:
+    report_generation: {max_tokens: 2048}
+  temperature: {report_generation: 0.2}
+context: {enabled: false}
+memory: {enabled: false}
+pipeline:
+  - type: translation_cycle
+  - type: final_translation
+runtime: {retries: 4, retry_backoff_seconds: 2, resume: true, failure_policy: stop}

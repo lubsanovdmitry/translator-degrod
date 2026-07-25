@@ -16,6 +16,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+local-mt = [
+  "torch>=2.2,<3",
+  "transformers>=4.40,<5",
+  "sentencepiece>=0.2,<1",
+  "sacremoses>=0.1,<1",
+]
 dev = [
   "pytest>=8,<9",
   "pytest-asyncio>=0.23,<1",
@@ -29,6 +35,9 @@ semantic-telephone = "semantic_telephone.cli:app"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+semantic_telephone = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

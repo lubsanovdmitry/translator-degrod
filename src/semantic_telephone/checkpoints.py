@@ -28,6 +28,7 @@ class CheckpointStore:
         if (
             data.get("stage_checksum") != expected_checksum
             or data.get("output_checksum") != checksum_text(output)
+            or data.get("checkpoint_reusable") is not True
         ):
             return None
         data["output_text"] = output
@@ -42,4 +43,3 @@ class CheckpointStore:
         payload: dict[str, Any] = result.to_dict()
         atomic_write_json(metadata_path, payload)
         return metadata_path, output_path
-

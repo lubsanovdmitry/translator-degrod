@@ -39,12 +39,22 @@ def test_checkpoint_roundtrip(tmp_path: Path) -> None:
     assert loaded.output_text == "b"
 
 
+def test_failed_checkpoint_is_not_reused(tmp_path: Path) -> None:
+    store = CheckpointStore(tmp_path)
+    result = _result()
+    result.error = "TimeoutError: provider failed"
+    result.execution_succeeded = False
+    result.checkpoint_reusable = False
+    store.save(1, "translation_cycle", result)
+    assert store.load(1, "translation_cycle", "checkpoint") is None
+
+
 def test_resume_reuses_completed_stages(config_file: Path) -> None:
     config = load_config(config_file)
+    config.runtime.concurrency = 2
     directory = asyncio.run(run_pipeline(config))
     events_before = (directory / "events.jsonl").read_text(encoding="utf-8")
     asyncio.run(run_pipeline(config, run_directory=directory))
     events_after = (directory / "events.jsonl").read_text(encoding="utf-8")
     assert len(events_after) > len(events_before)
     assert "checkpoint_reused" in events_after
-

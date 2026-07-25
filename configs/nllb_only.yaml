@@ -1,0 +1,44 @@
+run:
+  name: nllb_only
+  seed: 1080
+  source_language: ru
+  target_language: ru
+  output_root: runs
+input: {path: ../input.txt, encoding: utf-8}
+chunking: {strategy: target_chars, target_chars: 900, max_chars: 1800}
+translation:
+  default_provider: nllb
+  route_mode: fixed
+  languages: [ru, ka, ar, ja, de, en, ru]
+  providers:
+    nllb:
+      type: nllb
+      model: facebook/nllb-200-distilled-600M
+      device: auto
+      dtype: auto
+      max_input_tokens: 450
+      decoding: {mode: greedy, num_beams: 1, max_new_tokens: 512, no_repeat_ngram_size: 3}
+  engine_routing: {mode: single_engine, provider: nllb}
+generation: &generation
+  provider: openrouter
+  api_key_env: OPENROUTER_API_KEY
+  parameters:
+    reasoning: {enabled: false}
+  tasks:
+    conservative_repair: {temperature: 0.2, max_tokens: 2048}
+    reconstruction: {temperature: 0.6, max_tokens: 4096}
+    contextual_reconstruction: {temperature: 0.6, max_tokens: 4096}
+    memory_extraction: {temperature: 0.1, max_tokens: 2048}
+    report_generation: {temperature: 0.2, max_tokens: 2048}
+  temperature:
+    conservative_repair: 0.2
+    reconstruction: 0.6
+    contextual_reconstruction: 0.6
+    memory_extraction: 0.1
+    report_generation: 0.2
+context: {enabled: false}
+memory: {enabled: false}
+pipeline:
+  - type: translation_cycle
+  - type: final_translation
+runtime: {retries: 4, retry_backoff_seconds: 2, resume: true, failure_policy: stop}

@@ -52,6 +52,12 @@ def generate_route(
             route[index] = rng.choice(allowed)
     else:
         raise ValueError(f"unknown route mode: {config.mode}")
+    route = _filter_intermediate_languages(
+        route,
+        config=config,
+        source_language=source_language,
+        target_language=target_language,
+    )
     if not route or route[0] != source_language:
         route.insert(0, source_language)
     route = _deduplicate(route)
@@ -59,6 +65,27 @@ def generate_route(
         route.append(target_language)
     route = _deduplicate(route)
     return route
+
+
+def _filter_intermediate_languages(
+    route: list[str],
+    *,
+    config: RouteConfig,
+    source_language: str,
+    target_language: str,
+) -> list[str]:
+    result: list[str] = []
+    for index, language in enumerate(route):
+        is_endpoint = index in {0, len(route) - 1} and language in {
+            source_language,
+            target_language,
+        }
+        if is_endpoint or (
+            language not in config.deny
+            and (not config.allow or language in config.allow)
+        ):
+            result.append(language)
+    return result
 
 
 def _allowed(config: RouteConfig, source: str, target: str) -> list[str]:

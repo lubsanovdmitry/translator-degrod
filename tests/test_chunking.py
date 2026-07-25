@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from semantic_telephone.chunking import assemble_chunks, chunk_text
-from semantic_telephone.models import ChunkingConfig
+from semantic_telephone.models import ChunkingConfig, ContextConfig
+from semantic_telephone.stages.context import rolling_context
 
 
 def test_chunking_preserves_paragraph_content(sample_text: str) -> None:
@@ -41,3 +42,10 @@ def test_all_chunking_strategies(sample_text: str) -> None:
         assert chunks
         assert all(chunk.checksum and chunk.source_text for chunk in chunks)
 
+
+def test_zero_context_window_selects_nothing() -> None:
+    context = rolling_context(
+        ["first", "second"],
+        ContextConfig(enabled=True, previous_chunks=0),
+    )
+    assert context == ""

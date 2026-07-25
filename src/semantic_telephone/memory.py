@@ -12,6 +12,35 @@ class InvalidMemoryResponse(ValueError):
     pass
 
 
+def validate_memory_payload(raw: str) -> list[dict[str, Any]]:
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise InvalidMemoryResponse(f"invalid memory JSON: {error}") from error
+    observations = data.get("observations") if isinstance(data, dict) else None
+    if not isinstance(observations, list):
+        raise InvalidMemoryResponse("memory JSON must contain an observations list")
+    validated: list[dict[str, Any]] = []
+    for observation in observations:
+        if not isinstance(observation, dict):
+            raise InvalidMemoryResponse("each observation must be an object")
+        key = observation.get("entity_key")
+        text = observation.get("text")
+        confidence = observation.get("confidence")
+        if (
+            not isinstance(key, str)
+            or not key.strip()
+            or not isinstance(text, str)
+            or not text.strip()
+            or isinstance(confidence, bool)
+            or not isinstance(confidence, (int, float))
+            or not 0 <= confidence <= 1
+        ):
+            raise InvalidMemoryResponse("invalid entity_key, text, or confidence")
+        validated.append(observation)
+    return validated
+
+
 class MemoryStore:
     def __init__(self, directory: Path, *, half_life: float = 20.0) -> None:
         self.directory = directory
@@ -28,29 +57,12 @@ class MemoryStore:
     def ingest_json(self, raw: str, chunk_index: int, *, provenance: str) -> None:
         if provenance != "damaged":
             raise ValueError("automatic memory may only be populated from damaged results")
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError as error:
-            raise InvalidMemoryResponse(f"invalid memory JSON: {error}") from error
-        observations = data.get("observations") if isinstance(data, dict) else None
-        if not isinstance(observations, list):
-            raise InvalidMemoryResponse("memory JSON must contain an observations list")
+        observations = validate_memory_payload(raw)
         for observation in observations:
-            if not isinstance(observation, dict):
-                raise InvalidMemoryResponse("each observation must be an object")
-            key = observation.get("entity_key")
-            text = observation.get("text")
-            confidence = observation.get("confidence")
-            if (
-                not isinstance(key, str)
-                or not key.strip()
-                or not isinstance(text, str)
-                or not text.strip()
-                or not isinstance(confidence, (int, float))
-                or not 0 <= confidence <= 1
-            ):
-                raise InvalidMemoryResponse("invalid entity_key, text, or confidence")
-            self._add(key, text, float(confidence), chunk_index)
+            key = str(observation["entity_key"])
+            text = str(observation["text"])
+            confidence = float(observation["confidence"])
+            self._add(key, text, confidence, chunk_index)
             append_jsonl(
                 self.events_path,
                 {
@@ -114,4 +126,3 @@ class MemoryStore:
         self.save()
         if self.events_path.exists():
             self.events_path.unlink()
-
