@@ -11,6 +11,90 @@
 исходного текста и настроек. Метрики являются диагностическими эвристиками, а
 не объективной оценкой текста или доказательством научного эффекта.
 
+## Возможности v0.2
+
+Встроенные prompts и профили теперь входят в wheel. Новый проект можно создать
+без checkout репозитория:
+
+```bash
+semantic-telephone init my-run --profile translate_only
+semantic-telephone init my-real-run --profile nllb_only
+```
+
+`translate_only` остаётся только offline smoke test. `nllb_only`, `mixed_local`
+и другие real-профили требуют соответствующих зависимостей, весов и
+credentials.
+
+Перед дорогостоящим запуском доступны две разные проверки:
+
+```bash
+# Строго offline: не читает credentials, не открывает сеть и не скачивает веса.
+semantic-telephone plan configs/mixed_local.yaml --format text
+
+# Проверяет endpoints, dependencies и model cache, но не вызывает generation.
+semantic-telephone doctor configs/mixed_local.yaml
+
+# Разрешает download только точно настроенных моделей и OPUS-пар.
+semantic-telephone doctor configs/mixed_local.yaml --allow-downloads
+```
+
+Пути вида `builtin:restrained_reconstruction` в `prompts` ссылаются на
+упакованный prompt. Обычные относительные и абсолютные пути по-прежнему
+поддерживаются для пользовательских инструкций.
+
+Remote HTTP-вызовы одного run используют общий limiter и ledger:
+
+```yaml
+runtime:
+  requests_per_minute: 30  # null или 0 отключает limiter
+  retries: 4
+  budgets:
+    max_requests: 200
+    max_total_tokens: 250000
+    max_cost_usd: 10.0
+```
+
+`max_requests` проверяется до отправки. Token/cost budgets используют только
+фактически опубликованный provider usage; если provider не сообщает usage,
+manifest содержит предупреждение о неполной enforceability. После resume
+счётчики восстанавливаются из `events.jsonl`. Старое поле `runtime.resume`
+deprecated и будет удалено в v1.0: продолжение теперь всегда задаётся явной
+CLI-командой `resume`.
+
+Schema v2 хранит payload memory extraction как идемпотентный checkpointed
+side effect и сохраняет отдельный checksummed output каждого translation hop.
+Поэтому resume восстанавливает memory причинно, от ранних chunks к поздним.
+Schema-v1 run с выключенной memory остаётся читаемым; небезопасный resume
+старого memory-run отклоняется с понятной ошибкой.
+
+Необязательные локальные semantic metrics устанавливаются отдельно:
+
+```bash
+pip install -e '.[semantic-metrics]'
+```
+
+```yaml
+metrics:
+  semantic:
+    enabled: true
+    provider: sentence_transformers
+    model: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+    revision: null
+    device: auto
+    batch_size: 16
+    allow_downloads: false
+```
+
+Они добавляют cosine similarity source/final, per-chunk similarity и drift
+между соседними translation hops. Embeddings не сохраняются, а scores,
+модель/revision/device и caveat записываются в `metrics.json`.
+
+Matrix поддерживает `experiment.baseline` и
+`experiment.failure_policy: stop|continue`. Помимо run-level `summary.csv`
+создаются `aggregates.csv`, paired deltas, mean, sample standard deviation,
+median и диапазон. Эти значения диагностические и не являются доказательством
+статистической или художественной значимости.
+
 ## Реальный запуск
 
 Требуется Python 3.12 или новее.
@@ -385,8 +469,10 @@ budget.
 ## CLI
 
 ```text
-semantic-telephone init [DIRECTORY]
+semantic-telephone init [DIRECTORY] --profile PROFILE
 semantic-telephone validate CONFIG
+semantic-telephone plan CONFIG --format text|json
+semantic-telephone doctor CONFIG [--allow-downloads] --format text|json
 semantic-telephone run CONFIG
 semantic-telephone resume RUN_DIRECTORY
 semantic-telephone matrix MATRIX_CONFIG

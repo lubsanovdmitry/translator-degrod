@@ -82,14 +82,38 @@ class MemoryConfig:
 
 
 @dataclass(slots=True)
+class BudgetConfig:
+    max_requests: int | None = None
+    max_total_tokens: int | None = None
+    max_cost_usd: float | None = None
+
+
+@dataclass(slots=True)
 class RuntimeConfig:
     concurrency: int = 1
-    requests_per_minute: int = 30
+    requests_per_minute: int | None = 30
     retries: int = 4
     retry_backoff_seconds: float = 2.0
     resume: bool = True
     failure_policy: str = "stop"
     fallback_provider: str | None = None
+    budgets: BudgetConfig = field(default_factory=BudgetConfig)
+
+
+@dataclass(slots=True)
+class SemanticMetricConfig:
+    enabled: bool = False
+    provider: str = "sentence_transformers"
+    model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    revision: str | None = None
+    device: str = "auto"
+    batch_size: int = 16
+    allow_downloads: bool = False
+
+
+@dataclass(slots=True)
+class MetricsConfig:
+    semantic: SemanticMetricConfig = field(default_factory=SemanticMetricConfig)
 
 
 @dataclass(slots=True)
@@ -123,6 +147,7 @@ class RunConfig:
     context: ContextConfig = field(default_factory=ContextConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
+    metrics: MetricsConfig = field(default_factory=MetricsConfig)
     pipeline: list[PipelineStageConfig] = field(default_factory=list)
     temperatures: dict[str, float] = field(
         default_factory=lambda: {
@@ -200,6 +225,8 @@ class StageResult:
     checkpoint_reusable: bool = True
     provider_route: list[str] = field(default_factory=list)
     translation_details: list[dict[str, Any]] = field(default_factory=list)
+    memory_payload: str | None = None
+    memory_event_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -207,6 +234,7 @@ class StageResult:
 
 @dataclass(slots=True)
 class RunManifest:
+    artifact_schema_version: int
     resolved_config: dict[str, Any]
     application_version: str
     started_at: str
@@ -222,6 +250,8 @@ class RunManifest:
     translation_models: list[dict[str, Any]] = field(default_factory=list)
     report_generation: dict[str, Any] | None = None
     completed_at: str | None = None
+    request_summary: dict[str, Any] = field(default_factory=dict)
+    budget_status: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def create(
@@ -234,6 +264,7 @@ class RunManifest:
         prompt_checksums: dict[str, str],
     ) -> RunManifest:
         return cls(
+            artifact_schema_version=2,
             resolved_config=config.to_dict(),
             application_version=version,
             started_at=datetime.now(UTC).isoformat(),

@@ -9,7 +9,7 @@ from .utils.text import sentences, tokens
 
 def _paragraphs_with_offsets(text: str) -> list[tuple[str, int, int]]:
     result: list[tuple[str, int, int]] = []
-    for match in re.finditer(r"\S(?:.*?\S)?(?=\n\s*\n|\Z)", text, re.DOTALL):
+    for match in re.finditer(r"\S(?:.*?\S)?(?=\n\s*\n|\s*\Z)", text, re.DOTALL):
         result.append((match.group(0), match.start(), match.end()))
     return result
 
@@ -47,7 +47,11 @@ def chunk_text(text: str, config: ChunkingConfig) -> list[Chunk]:
         source = "\n\n".join(item[0] for item in group)
         start = group[0][1]
         end = group[-1][2]
-        context = "\n\n".join(previous_texts[-config.paragraph_overlap :])
+        context = (
+            "\n\n".join(previous_texts[-config.paragraph_overlap :])
+            if config.paragraph_overlap > 0
+            else ""
+        )
         chunk_id = f"{index + 1:04d}-{checksum_text(source)[:10]}"
         chunks.append(
             Chunk(
@@ -111,4 +115,3 @@ def _sentence_groups(text: str, config: ChunkingConfig) -> list[list[tuple[str, 
 def assemble_chunks(values: list[str]) -> str:
     """Join only transformed chunk bodies; context prefixes are deliberately excluded."""
     return "\n\n".join(value.strip() for value in values if value.strip()) + "\n"
-

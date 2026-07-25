@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -19,7 +20,7 @@ from .checkpoints import CheckpointStore
 from .chunking import assemble_chunks, chunk_text
 from .config import resolve_input_path, resolve_output_root
 from .memory import MemoryStore, validate_memory_payload
-from .metrics import calculate_metrics
+from .metrics import calculate_metrics, prepare_semantic_metrics
 from .models import (
     Chunk,
     GenerationResult,
@@ -33,7 +34,9 @@ from .models import (
 from .providers.factory import generation_provider, translation_provider
 from .providers.mock import MockGenerationProvider, MockTranslationProvider
 from .reporting import create_report
+from .resources import prompt_text
 from .routes import generate_route
+from .runtime import BudgetExceededError, RequestController, safe_diagnostic
 from .stages.context import rolling_context
 from .stages.memory import extract_memory, memory_prompt
 from .stages.reconstruction import reconstruct_text
@@ -69,25 +72,33 @@ class _ChunkResult:
     warnings: list[str]
 
 
-def _prompt_root() -> Path:
-    return Path(__file__).resolve().parents[2] / "prompts"
-
-
 def load_prompts(config: RunConfig) -> tuple[dict[StageType, str], dict[str, str]]:
     prompts: dict[StageType, str] = {}
     checksums: dict[str, str] = {}
     for stage_type, filename in PROMPT_FILES.items():
         custom = config.custom_prompts.get(stage_type.value)
         if custom:
-            path = Path(custom)
-            if not path.is_absolute() and config.config_path:
-                path = Path(config.config_path).parent / path
+            if custom.startswith("builtin:"):
+                text = prompt_text(custom.split(":", 1)[1])
+            else:
+                path = Path(custom)
+                if not path.is_absolute() and config.config_path:
+                    path = Path(config.config_path).parent / path
+                text = path.read_text(encoding="utf-8")
         else:
-            path = _prompt_root() / filename
-        text = path.read_text(encoding="utf-8")
+            text = prompt_text(Path(filename).stem)
         prompts[stage_type] = text
         checksums[stage_type.value] = checksum_text(text)
-    report_prompt = (_prompt_root() / "report_generation.txt").read_text(encoding="utf-8")
+    report_custom = config.custom_prompts.get("report_generation")
+    if report_custom and report_custom.startswith("builtin:"):
+        report_prompt = prompt_text(report_custom.split(":", 1)[1])
+    elif report_custom:
+        report_path = Path(report_custom)
+        if not report_path.is_absolute() and config.config_path:
+            report_path = Path(config.config_path).parent / report_path
+        report_prompt = report_path.read_text(encoding="utf-8")
+    else:
+        report_prompt = prompt_text("report_generation")
     checksums["report_generation"] = checksum_text(report_prompt)
     return prompts, checksums
 
@@ -130,12 +141,27 @@ async def run_pipeline(config: RunConfig, *, run_directory: Path | None = None) 
     if not source.strip():
         raise ValueError("input text is empty")
 
+    manifest_path = run_directory / "manifest.json"
+    existing_manifest = read_json(manifest_path) if manifest_path.exists() else None
+    if (
+        existing_manifest is not None
+        and int(existing_manifest.get("artifact_schema_version", 1)) < 2
+        and config.memory.enabled
+    ):
+        raise RuntimeError(
+            "cannot safely resume a schema-v1 run with memory enabled; "
+            "start a new run so memory payloads can be checkpointed"
+        )
     prompts, prompt_checksums = load_prompts(config)
+    semantic_metrics = (
+        await asyncio.to_thread(prepare_semantic_metrics, config.metrics.semantic)
+        if config.metrics.semantic.enabled
+        else None
+    )
     atomic_write_text(run_directory / "source.txt", source)
     atomic_write_yaml(run_directory / "resolved_config.yaml", config.to_dict())
-    manifest_path = run_directory / "manifest.json"
-    if manifest_path.exists():
-        manifest = read_json(manifest_path)
+    if existing_manifest is not None:
+        manifest = existing_manifest
         manifest["state"] = "running"
     else:
         created = RunManifest.create(
@@ -152,7 +178,12 @@ async def run_pipeline(config: RunConfig, *, run_directory: Path | None = None) 
         manifest = created.to_dict()
     atomic_write_json(manifest_path, manifest)
 
-    translator = translation_provider(config.translation)
+    request_controller = RequestController(config.runtime, run_directory / "events.jsonl")
+    translator = (
+        translation_provider(config.translation, request_controller=request_controller)
+        if "request_controller" in inspect.signature(translation_provider).parameters
+        else translation_provider(config.translation)
+    )
     generators: dict[str, Any] = {}
     generation_stage_types = {
         StageType.CONSERVATIVE_REPAIR,
@@ -163,9 +194,19 @@ async def run_pipeline(config: RunConfig, *, run_directory: Path | None = None) 
     for stage_type in {
         stage.type for stage in config.pipeline if stage.enabled
     } & generation_stage_types:
-        generators[stage_type.value] = generation_provider(config.generation, task=stage_type.value)
+        generators[stage_type.value] = generation_provider(
+            config.generation,
+            task=stage_type.value,
+            request_controller=request_controller,
+        )
     chunks = chunk_text(source, config.chunking)
-    memory = MemoryStore(run_directory / "memory", half_life=config.memory.half_life_chunks)
+    # Rebuild memory causally from stage checkpoints. Loading the final state here
+    # would expose later chunks to earlier reconstruction stages during resume.
+    memory = MemoryStore(
+        run_directory / "memory",
+        half_life=config.memory.half_life_chunks,
+        load_items=False,
+    )
     previous_contexts: list[str] = []
     final_values: list[str] = []
     all_routes: list[list[str]] = []
@@ -235,11 +276,19 @@ async def run_pipeline(config: RunConfig, *, run_directory: Path | None = None) 
         final = assemble_chunks(final_values)
         atomic_write_text(run_directory / "final.txt", final)
         metrics = calculate_metrics(source, final)
+        if semantic_metrics is not None:
+            metrics["semantic"] = await asyncio.to_thread(
+                semantic_metrics.calculate,
+                source,
+                final,
+                run_directory,
+            )
         atomic_write_json(run_directory / "metrics.json", metrics)
         manifest["metrics"] = metrics
-        manifest["state"] = "completed"
-        manifest["completed_at"] = datetime.now(UTC).isoformat()
-        atomic_write_json(manifest_path, manifest)
+        warnings.extend(
+            str(item)
+            for item in request_controller.summary().get("enforceability_warnings", [])
+        )
         report_path = create_report(
             run_directory,
             config=config.to_dict(),
@@ -252,6 +301,7 @@ async def run_pipeline(config: RunConfig, *, run_directory: Path | None = None) 
             config=config,
             metrics=metrics,
             routes=all_routes,
+            request_controller=request_controller,
         )
         manifest["translation_models"] = _translation_models_manifest(run_directory)
         if report_generation is not None:
@@ -261,14 +311,21 @@ async def run_pipeline(config: RunConfig, *, run_directory: Path | None = None) 
                 "response_id": report_generation.response_id,
                 "usage": report_generation.usage,
             }
+        manifest["request_summary"] = request_controller.summary()
+        manifest["budget_status"] = request_controller.budget_status()
+        manifest["state"] = "completed"
+        manifest["completed_at"] = datetime.now(UTC).isoformat()
         atomic_write_json(manifest_path, manifest)
     except BaseException as error:
         manifest["state"] = (
             "interrupted"
             if isinstance(error, (KeyboardInterrupt, asyncio.CancelledError))
-            else "failed"
+            else ("budget_exceeded" if isinstance(error, BudgetExceededError) else "failed")
         )
-        manifest["last_error"] = f"{type(error).__name__}: {error}"
+        manifest["last_error"] = safe_diagnostic(error)
+        manifest["translation_models"] = _translation_models_manifest(run_directory)
+        manifest["request_summary"] = request_controller.summary()
+        manifest["budget_status"] = request_controller.budget_status()
         atomic_write_json(manifest_path, manifest)
         raise
     return run_directory
@@ -477,6 +534,17 @@ async def _run_stage(
     )
     cached = store.load(stage_number, stage.type.value, stage_checksum)
     if cached:
+        if stage.type is StageType.MEMORY_EXTRACTION:
+            if not cached.memory_payload or not cached.memory_event_id:
+                raise RuntimeError(
+                    "memory checkpoint lacks schema-v2 side-effect data; start a new run"
+                )
+            memory.ingest_json(
+                cached.memory_payload,
+                chunk_index,
+                provenance="damaged",
+                event_id=cached.memory_event_id,
+            )
         append_jsonl(
             events_path,
             {
@@ -504,6 +572,8 @@ async def _run_stage(
     stage_warnings: list[str] = []
     provider_route: list[str] = []
     translation_details: list[dict[str, Any]] = []
+    memory_payload: str | None = None
+    memory_event_id: str | None = None
     output = input_text
     prompt_checksum = prompt_checksums.get(stage.type.value)
     error_message: str | None = None
@@ -517,8 +587,60 @@ async def _run_stage(
             stage_warnings.append("stage skipped by enabled/probability decision")
         elif stage.type is StageType.TRANSLATION_CYCLE:
 
+            hop_results: list[TranslationResult] = []
+
+            def record_hop(
+                hop_index: int,
+                hop_input: str,
+                hop_result: TranslationResult,
+            ) -> None:
+                nonlocal output, provider_name, model, response_id, usage
+                output_path, output_checksum = store.save_hop_output(
+                    stage_number,
+                    stage.type.value,
+                    hop_index,
+                    hop_result.text,
+                )
+                translation_details.append(
+                    {
+                        "provider": hop_result.provider,
+                        "model": hop_result.model,
+                        "response_id": hop_result.response_id,
+                        "usage": hop_result.usage,
+                        "warnings": hop_result.warnings,
+                        "deterministic": hop_result.deterministic,
+                        "input_checksum": checksum_text(hop_input),
+                        "output_checksum": output_checksum,
+                        "output_path": output_path,
+                        "seed": seed + hop_index,
+                        **hop_result.metadata,
+                    }
+                )
+                hop_results.append(hop_result)
+                provider_route.append(hop_result.provider)
+                output = hop_result.text
+                provider_name = hop_result.provider
+                model = hop_result.model
+                response_id = hop_result.response_id
+                usage = _sum_usage(result.usage for result in hop_results)
+
             async def operation() -> tuple[str, list[TranslationResult]]:
-                return await translate_route(translator, input_text, route, seed=seed)
+                nonlocal output, provider_name, model, response_id, usage
+                translation_details.clear()
+                provider_route.clear()
+                hop_results.clear()
+                output = input_text
+                provider_name = "none"
+                model = "none"
+                response_id = None
+                usage = None
+                return await translate_route(
+                    translator,
+                    input_text,
+                    route,
+                    seed=seed,
+                    on_hop=record_hop,
+                )
 
             (output, hop_results), attempts = await with_retry(
                 operation,
@@ -526,26 +648,9 @@ async def _run_stage(
                 backoff_seconds=config.runtime.retry_backoff_seconds,
             )
             if hop_results:
-                provider_route = [result.provider for result in hop_results]
-                translation_details = [
-                    {
-                        "provider": result.provider,
-                        "model": result.model,
-                        "response_id": result.response_id,
-                        "usage": result.usage,
-                        "warnings": result.warnings,
-                        "deterministic": result.deterministic,
-                        **result.metadata,
-                    }
-                    for result in hop_results
-                ]
-                provider_name = hop_results[-1].provider
-                model = hop_results[-1].model
-                response_id = hop_results[-1].response_id
                 stage_warnings.extend(
                     warning for result in hop_results for warning in result.warnings
                 )
-                usage = _sum_usage(result.usage for result in hop_results)
             execution_succeeded = True
         elif stage.type is StageType.FINAL_TRANSLATION:
             # Translation cycles already return to target; translate only when explicitly configured.
@@ -564,6 +669,12 @@ async def _run_stage(
                 output = result.text
                 provider_name, model = result.provider, result.model
                 provider_route = [result.provider]
+                output_path, output_checksum = store.save_hop_output(
+                    stage_number,
+                    stage.type.value,
+                    0,
+                    result.text,
+                )
                 translation_details = [
                     {
                         "provider": result.provider,
@@ -572,6 +683,12 @@ async def _run_stage(
                         "usage": result.usage,
                         "warnings": result.warnings,
                         "deterministic": result.deterministic,
+                        "input_checksum": checksum_text(input_text),
+                        "output_checksum": output_checksum,
+                        "output_path": output_path,
+                        "source_language": source,
+                        "target_language": config.target_language,
+                        "seed": seed,
                         **result.metadata,
                     }
                 ]
@@ -643,7 +760,15 @@ async def _run_stage(
                 retries=config.runtime.retries,
                 backoff_seconds=config.runtime.retry_backoff_seconds,
             )
-            memory.ingest_json(result.text, chunk_index, provenance="damaged")
+            memory_payload = result.text
+            memory_event_id = "memory-" + checksum_data(
+                {
+                    "run": store.directory.parents[1].name,
+                    "chunk": chunk_index,
+                    "stage": stage_number,
+                    "stage_checksum": stage_checksum,
+                }
+            )[:24]
             provider_name, model = result.provider, result.model
             response_id, usage = result.response_id, result.usage
             stage_warnings.extend(result.warnings)
@@ -652,8 +777,12 @@ async def _run_stage(
             raise ValueError(f"unsupported stage type: {stage.type}")
     except Exception as error:  # noqa: BLE001 - provider boundary records vendor exceptions
         attempts = int(getattr(error, "attempts", attempts))
-        error_message = f"{type(error).__name__}: {error}"
-        if config.runtime.failure_policy == "skip":
+        error_message = safe_diagnostic(error)
+        if isinstance(error, BudgetExceededError):
+            stage_warnings.append(error_message)
+            output = input_text
+            fatal_error = error
+        elif config.runtime.failure_policy == "skip":
             stage_warnings.append(error_message)
             output = input_text
         elif config.runtime.failure_policy == "fallback":
@@ -672,7 +801,15 @@ async def _run_stage(
             )
             output, provider_name, model, response_id, usage = _generation_fields(fallback)
             if stage.type is StageType.MEMORY_EXTRACTION:
-                memory.ingest_json(fallback.text, chunk_index, provenance="damaged")
+                memory_payload = fallback.text
+                memory_event_id = "memory-" + checksum_data(
+                    {
+                        "run": store.directory.parents[1].name,
+                        "chunk": chunk_index,
+                        "stage": stage_number,
+                        "stage_checksum": stage_checksum,
+                    }
+                )[:24]
             attempts += 1
             execution_succeeded = True
         else:
@@ -721,8 +858,22 @@ async def _run_stage(
         checkpoint_reusable=fatal_error is None,
         provider_route=provider_route,
         translation_details=translation_details,
+        memory_payload=memory_payload,
+        memory_event_id=memory_event_id,
     )
     metadata_path, _ = store.save(stage_number, stage.type.value, result_record)
+    if (
+        stage.type is StageType.MEMORY_EXTRACTION
+        and execution_succeeded
+        and memory_payload
+        and memory_event_id
+    ):
+        memory.ingest_json(
+            memory_payload,
+            chunk_index,
+            provenance="damaged",
+            event_id=memory_event_id,
+        )
     append_jsonl(
         events_path,
         {
@@ -901,11 +1052,25 @@ async def _append_generated_report_summary(
     config: RunConfig,
     metrics: dict[str, Any],
     routes: list[list[str]],
+    request_controller: RequestController,
 ) -> GenerationResult | None:
-    generator = generation_provider(config.generation, task="report_generation")
+    generator = generation_provider(
+        config.generation,
+        task="report_generation",
+        request_controller=request_controller,
+    )
     if isinstance(generator, MockGenerationProvider):
         return None
-    instruction = (_prompt_root() / "report_generation.txt").read_text(encoding="utf-8")
+    custom = config.custom_prompts.get("report_generation")
+    if custom and custom.startswith("builtin:"):
+        instruction = prompt_text(custom.split(":", 1)[1])
+    elif custom:
+        path = Path(custom)
+        if not path.is_absolute() and config.config_path:
+            path = Path(config.config_path).parent / path
+        instruction = path.read_text(encoding="utf-8")
+    else:
+        instruction = prompt_text("report_generation")
     prompt = f"{instruction}\n\n<<<TEXT>>>\n" + json.dumps(
         {
             "run": config.name,

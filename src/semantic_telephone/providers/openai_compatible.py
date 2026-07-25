@@ -5,6 +5,7 @@ from typing import Any
 import httpx
 
 from ..models import GenerationResult
+from ..runtime import RequestController
 from ..utils.retry import NonRetryableProviderError
 
 
@@ -29,6 +30,9 @@ class OpenAICompatibleProvider:
         provider_name: str = "openai_compatible",
         headers: dict[str, str] | None = None,
         client: httpx.AsyncClient | None = None,
+        request_controller: RequestController | None = None,
+        task: str | None = None,
+        provider_alias: str | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
@@ -39,6 +43,9 @@ class OpenAICompatibleProvider:
         self.provider_name = provider_name
         self.headers = headers or {}
         self._client = client
+        self.request_controller = request_controller
+        self.task = task
+        self.provider_alias = provider_alias or provider_name
 
     async def generate(
         self,
@@ -61,19 +68,64 @@ class OpenAICompatibleProvider:
         if response_format == "json":
             body["response_format"] = {"type": "json_object"}
         headers = {"Authorization": f"Bearer {self.api_key}", **self.headers}
-        if self._client is not None:
-            response = await self._client.post(
-                f"{self.base_url}/chat/completions", headers=headers, json=body
+        request_id = (
+            await self.request_controller.before_request(
+                provider=self.provider_alias,
+                provider_type=self.provider_name,
+                operation="generate",
+                task=self.task,
             )
-        else:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-                response = await client.post(
+            if self.request_controller
+            else None
+        )
+        try:
+            if self._client is not None:
+                response = await self._client.post(
                     f"{self.base_url}/chat/completions", headers=headers, json=body
                 )
-        response.raise_for_status()
-        data = response.json()
-        if not isinstance(data, dict):
-            raise GenerationContentError("generation response body is not an object")
+            else:
+                async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                    response = await client.post(
+                        f"{self.base_url}/chat/completions", headers=headers, json=body
+                    )
+            response.raise_for_status()
+        except BaseException as error:
+            if self.request_controller and request_id:
+                self.request_controller.request_failed(
+                    request_id,
+                    provider=self.provider_alias,
+                    provider_type=self.provider_name,
+                    operation="generate",
+                    task=self.task,
+                    error=error,
+                )
+            raise
+        try:
+            data = response.json()
+            if not isinstance(data, dict):
+                raise GenerationContentError("generation response body is not an object")
+        except BaseException as error:
+            if self.request_controller and request_id:
+                self.request_controller.request_failed(
+                    request_id,
+                    provider=self.provider_alias,
+                    provider_type=self.provider_name,
+                    operation="generate",
+                    task=self.task,
+                    error=error,
+                )
+            raise
+        usage_raw = data.get("usage")
+        usage = usage_raw if isinstance(usage_raw, dict) else None
+        if self.request_controller and request_id:
+            self.request_controller.request_succeeded(
+                request_id,
+                provider=self.provider_alias,
+                provider_type=self.provider_name,
+                operation="generate",
+                task=self.task,
+                usage=usage,
+            )
         if data.get("error") is not None:
             raise GenerationResponseError(_provider_error_message(data["error"]))
         try:
@@ -108,8 +160,6 @@ class OpenAICompatibleProvider:
                     max_tokens=self.max_tokens,
                 )
             )
-        usage_raw = data.get("usage")
-        usage = usage_raw if isinstance(usage_raw, dict) else None
         response_model = data.get("model")
         model = response_model if isinstance(response_model, str) else self.model
         warnings = []
@@ -215,6 +265,9 @@ class OpenRouterGenerationProvider(OpenAICompatibleProvider):
         site_url: str | None = None,
         app_name: str | None = None,
         client: httpx.AsyncClient | None = None,
+        request_controller: RequestController | None = None,
+        task: str | None = None,
+        provider_alias: str | None = None,
     ) -> None:
         headers: dict[str, str] = {}
         if site_url:
@@ -231,4 +284,7 @@ class OpenRouterGenerationProvider(OpenAICompatibleProvider):
             provider_name="openrouter",
             headers=headers,
             client=client,
+            request_controller=request_controller,
+            task=task,
+            provider_alias=provider_alias,
         )

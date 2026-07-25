@@ -7,6 +7,7 @@ from typing import Any
 from dotenv import load_dotenv
 
 from ..models import ProviderConfig, TranslationResult
+from ..runtime import RequestController
 from .base import TextGenerationProvider, TranslationProvider
 from .local_mt import M2M100TranslationProvider, NllbTranslationProvider
 from .mock import MockGenerationProvider, MockTranslationProvider
@@ -16,11 +17,17 @@ from .router import TranslationProviderRouter
 from .translation import LibreTranslateProvider
 
 
-def translation_provider(config: ProviderConfig) -> TranslationProvider:
+def translation_provider(
+    config: ProviderConfig, *, request_controller: RequestController | None = None
+) -> TranslationProvider:
     load_dotenv()
     if config.providers:
         providers = {
-            name: _single_translation_provider(provider)
+            name: _single_translation_provider(
+                provider,
+                request_controller=request_controller,
+                alias=name,
+            )
             for name, provider in config.providers.items()
             if provider.enabled
         }
@@ -29,10 +36,19 @@ def translation_provider(config: ProviderConfig) -> TranslationProvider:
             default_provider=config.default_provider or "",
             routing=config.engine_routing,
         )
-    return _single_translation_provider(config)
+    return _single_translation_provider(
+        config,
+        request_controller=request_controller,
+        alias=config.default_provider or config.provider,
+    )
 
 
-def _single_translation_provider(config: ProviderConfig) -> TranslationProvider:
+def _single_translation_provider(
+    config: ProviderConfig,
+    *,
+    request_controller: RequestController | None = None,
+    alias: str,
+) -> TranslationProvider:
     if config.provider == "mock":
         return MockTranslationProvider()
     if config.provider in {"local", "libretranslate"}:
@@ -47,6 +63,8 @@ def _single_translation_provider(config: ProviderConfig) -> TranslationProvider:
             timeout_seconds=config.timeout_seconds,
             retries=int(config.options.get("retries", 3)),
             retry_backoff_seconds=float(config.options.get("retry_backoff_seconds", 0.5)),
+            request_controller=request_controller,
+            provider_alias=alias,
         )
     if config.provider in {"nllb", "m2m100"}:
         provider_class = (
@@ -95,7 +113,10 @@ def _single_translation_provider(config: ProviderConfig) -> TranslationProvider:
 
 
 def generation_provider(
-    config: ProviderConfig, *, task: str | None = None
+    config: ProviderConfig,
+    *,
+    task: str | None = None,
+    request_controller: RequestController | None = None,
 ) -> TextGenerationProvider:
     load_dotenv()
     selected = _task_provider_config(config, task)
@@ -114,6 +135,9 @@ def generation_provider(
             timeout_seconds=selected.timeout_seconds,
             max_tokens=_optional_int(selected.options.get("max_tokens")),
             parameters=_generation_parameters(selected.options),
+            request_controller=request_controller,
+            task=task,
+            provider_alias=selected.provider,
         )
     if selected.provider == "openrouter":
         key_env = selected.api_key_env or "OPENROUTER_API_KEY"
@@ -140,6 +164,9 @@ def generation_provider(
             parameters=_generation_parameters(selected.options),
             site_url=_optional_string(selected.options.get("site_url")),
             app_name=_optional_string(selected.options.get("app_name")),
+            request_controller=request_controller,
+            task=task,
+            provider_alias=selected.provider,
         )
     raise ValueError(f"unknown generation provider: {selected.provider}")
 

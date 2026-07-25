@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from itertools import pairwise
 
 from ..models import TranslationResult
@@ -13,11 +14,24 @@ async def translate_route(
     route: list[str],
     *,
     seed: int,
+    on_hop: Callable[[int, str, TranslationResult], None] | None = None,
 ) -> tuple[str, list[TranslationResult]]:
     if isinstance(provider, TranslationProviderRouter) and provider.serializes_routes:
         async with provider.route_lock:
-            return await _translate_route_unlocked(provider, text, route, seed=seed)
-    return await _translate_route_unlocked(provider, text, route, seed=seed)
+            return await _translate_route_unlocked(
+                provider,
+                text,
+                route,
+                seed=seed,
+                on_hop=on_hop,
+            )
+    return await _translate_route_unlocked(
+        provider,
+        text,
+        route,
+        seed=seed,
+        on_hop=on_hop,
+    )
 
 
 async def _translate_route_unlocked(
@@ -26,6 +40,7 @@ async def _translate_route_unlocked(
     route: list[str],
     *,
     seed: int,
+    on_hop: Callable[[int, str, TranslationResult], None] | None,
 ) -> tuple[str, list[TranslationResult]]:
     current = text
     results: list[TranslationResult] = []
@@ -58,6 +73,8 @@ async def _translate_route_unlocked(
         )
         if index == 0 and preflight_warnings:
             result.warnings[:0] = preflight_warnings
+        if on_hop is not None:
+            on_hop(index, current, result)
         current = result.text
         results.append(result)
     return current, results

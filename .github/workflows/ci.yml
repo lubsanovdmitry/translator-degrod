@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: python -m pip install -e '.[dev]'
+      - run: pytest --disable-socket -q
+      - run: ruff check src tests
+      - run: mypy
+      - run: python -m compileall -q src tests
+      - run: python -m semantic_telephone.resource_sync --check
+      - name: Validate every non-matrix profile without downloads
+        run: |
+          for config in \
+            configs/aggressive_reconstruction.yaml \
+            configs/commercial_baseline.yaml \
+            configs/conservative_reconstruction.yaml \
+            configs/grammar_repair.yaml \
+            configs/inferred_memory.yaml \
+            configs/iterative_reconstruction.yaml \
+            configs/m2m100_only.yaml \
+            configs/mixed_local.yaml \
+            configs/mixed_with_libretranslate.yaml \
+            configs/nllb_only.yaml \
+            configs/pairwise_opus.yaml \
+            configs/raw_translation.yaml \
+            configs/rolling_context.yaml \
+            configs/sparse_repair.yaml \
+            configs/translate_only.yaml; do
+            semantic-telephone validate "$config"
+          done
+      - run: git diff --check
+
+  wheel-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install build
+      - run: python -m build --wheel
+      - run: python -m venv /tmp/semantic-wheel-venv
+      - run: /tmp/semantic-wheel-venv/bin/pip install dist/*.whl
+      - run: /tmp/semantic-wheel-venv/bin/semantic-telephone init /tmp/wheel-smoke --profile translate_only
+      - run: echo 'A short offline smoke-test paragraph.' > /tmp/wheel-smoke/input.txt
+      - run: /tmp/semantic-wheel-venv/bin/semantic-telephone validate /tmp/wheel-smoke/semantic-telephone.yaml
+      - run: /tmp/semantic-wheel-venv/bin/semantic-telephone run /tmp/wheel-smoke/semantic-telephone.yaml
+      - run: test -f /tmp/wheel-smoke/runs/*/manifest.json
+      - run: test -f /tmp/wheel-smoke/runs/*/report.md
+      - run: test -s /tmp/wheel-smoke/runs/*/final.txt
+      - run: |
+          /tmp/semantic-wheel-venv/bin/python - <<'PY'
+          import glob
+          import json
+
+          with open(glob.glob("/tmp/wheel-smoke/runs/*/manifest.json")[0]) as handle:
+              manifest = json.load(handle)
+          assert manifest["artifact_schema_version"] == 2
+          assert manifest["state"] == "completed"
+          assert manifest["processed_chunks"]
+          PY

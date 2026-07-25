@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 
@@ -11,7 +12,9 @@ from .config import ConfigError, config_from_resolved, load_config
 from .experiments import run_matrix_sync
 from .memory import MemoryStore
 from .pipeline import run_pipeline
+from .planning import create_plan, doctor_config
 from .reporting import regenerate_report
+from .resources import profile_names, profile_text
 from .utils.files import atomic_write_text, read_json
 
 app = typer.Typer(help="Reproducible recursive translation experiments.", no_args_is_help=True)
@@ -28,9 +31,23 @@ def _configure_logging(verbose: bool = False) -> None:
 
 
 @app.command()
-def init(directory: Annotated[Path, typer.Argument()] = Path(".")) -> None:
-    """Create a minimal mock-only starter workspace without overwriting files."""
+def init(
+    directory: Annotated[Path, typer.Argument()] = Path("."),
+    profile: Annotated[str, typer.Option("--profile", "-p")] = "translate_only",
+) -> None:
+    """Create a starter workspace from a bundled profile without overwriting files."""
+    if profile not in profile_names():
+        choices = ", ".join(profile_names())
+        raise typer.BadParameter(f"unknown profile {profile!r}; choose one of: {choices}")
     directory.mkdir(parents=True, exist_ok=True)
+    starter = profile_text(profile, standalone=True)
+    mock_only = profile in {
+        "translate_only",
+        "sparse_repair",
+        "iterative_reconstruction",
+        "rolling_context",
+        "inferred_memory",
+    }
     files = {
         ".env": (
             "# Optional API credentials. Mock providers need none.\n"
@@ -41,12 +58,17 @@ def init(directory: Annotated[Path, typer.Argument()] = Path(".")) -> None:
             "LIBRETRANSLATE_API_KEY=\n"
         ),
         "input.txt": "",
-        "semantic-telephone.yaml": _starter_config(),
+        "semantic-telephone.yaml": starter,
         "SEMANTIC_TELEPHONE.md": (
-            "# Mock smoke test only\n\n"
-            "This starter checks the CLI and artifact pipeline; it does not perform "
-            "machine translation. For a real run, use the repository's "
-            "`configs/nllb_only.yaml` or `configs/mixed_local.yaml` profile.\n\n"
+            ("# Mock smoke test only\n\n" if mock_only else "# Semantic Telephone profile\n\n")
+            + (
+                "This starter checks the CLI and artifact pipeline; it does not perform "
+                "machine translation.\n\n"
+                if mock_only
+                else "This profile uses real providers; review credentials and model downloads "
+                "before running it.\n\n"
+            )
+            +
             "Put text in `input.txt`, then run:\n\n"
             "```bash\nsemantic-telephone validate semantic-telephone.yaml\n"
             "semantic-telephone run semantic-telephone.yaml\n```\n"
@@ -70,6 +92,43 @@ def validate(config: Annotated[Path, typer.Argument(exists=True, dir_okay=False)
         typer.echo(f"Configuration error: {error}", err=True)
         raise typer.Exit(2) from error
     typer.echo(f"Valid configuration: {loaded.name} ({len(loaded.pipeline)} stages)")
+
+
+@app.command("plan")
+def plan_command(
+    config: Annotated[Path, typer.Argument(exists=True, dir_okay=False)],
+    output_format: Annotated[str, typer.Option("--format")] = "text",
+) -> None:
+    """Resolve routes, providers, resources, and request bounds without network access."""
+    if output_format not in {"text", "json"}:
+        raise typer.BadParameter("--format must be text or json")
+    try:
+        result = create_plan(load_config(config))
+    except (ConfigError, ValueError, OSError, RuntimeError) as error:
+        typer.echo(f"Plan failed: {error}", err=True)
+        raise typer.Exit(2) from error
+    _emit_structured(result, output_format)
+
+
+@app.command()
+def doctor(
+    config: Annotated[Path, typer.Argument(exists=True, dir_okay=False)],
+    allow_downloads: Annotated[bool, typer.Option("--allow-downloads")] = False,
+    output_format: Annotated[str, typer.Option("--format")] = "text",
+) -> None:
+    """Check configured services, dependencies, and caches without paid generation."""
+    if output_format not in {"text", "json"}:
+        raise typer.BadParameter("--format must be text or json")
+    try:
+        result = asyncio.run(
+            doctor_config(load_config(config), allow_downloads=allow_downloads)
+        )
+    except (ConfigError, ValueError, OSError, RuntimeError) as error:
+        typer.echo(f"Doctor failed: {error}", err=True)
+        raise typer.Exit(2) from error
+    _emit_structured(result, output_format)
+    if not result["ok"]:
+        raise typer.Exit(2)
 
 
 @app.command()
@@ -182,40 +241,35 @@ def _cell(value: str) -> str:
     return value.replace("|", "\\|").replace("\n", "<br>")
 
 
-def _starter_config() -> str:
-    return """# Smoke test only: mock providers do not perform machine translation.
-run:
-  name: translate-only
-  seed: 1080
-  source_language: ru
-  target_language: ru
-  output_root: runs
-input:
-  path: input.txt
-chunking:
-  strategy: target_chars
-  target_chars: 1100
-  max_chars: 1800
-  paragraph_overlap: 1
-translation:
-  provider: mock
-  route_mode: fixed
-  languages: [ru, ka, ar, en, ru]
-generation:
-  provider: mock
-  model: mock
-context:
-  enabled: false
-memory:
-  enabled: false
-pipeline:
-  - type: translation_cycle
-    hops: {min: 4, max: 6}
-  - type: final_translation
-runtime:
-  retries: 3
-  resume: true
-"""
+def _emit_structured(value: dict[str, Any], output_format: str) -> None:
+    if output_format == "json":
+        typer.echo(json.dumps(value, ensure_ascii=False, indent=2, default=str))
+        return
+    typer.echo(f"Run: {value.get('run', 'unknown')}")
+    if isinstance(value.get("checks"), list):
+        for item in value["checks"]:
+            if isinstance(item, dict):
+                typer.echo(
+                    f"[{str(item.get('status', 'unknown')).upper()}] "
+                    f"{item.get('name')}: {item.get('detail')}"
+                )
+        return
+    typer.echo(f"Chunks: {value.get('chunks')}")
+    typer.echo(f"Effective concurrency: {value.get('effective_concurrency')}")
+    bounds = value.get("request_bounds")
+    if isinstance(bounds, dict):
+        typer.echo(
+            "Provider calls: "
+            f"{bounds.get('provider_calls')} (maximum attempts: {bounds.get('maximum_attempts')})"
+        )
+    routes = value.get("planned_routes")
+    if isinstance(routes, list):
+        for route in routes:
+            if isinstance(route, dict):
+                typer.echo(
+                    f"Chunk {route.get('chunk')} stage {route.get('stage')}: "
+                    + " -> ".join(str(item) for item in route.get("languages", []))
+                )
 
 
 if __name__ == "__main__":

@@ -1,20 +1,24 @@
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from .models import (
+    BudgetConfig,
     ChunkingConfig,
     ContextConfig,
     EngineRoutingConfig,
     MemoryConfig,
+    MetricsConfig,
     PipelineStageConfig,
     ProviderConfig,
     RouteConfig,
     RunConfig,
     RuntimeConfig,
+    SemanticMetricConfig,
     StageType,
 )
 
@@ -31,9 +35,25 @@ def _mapping(value: Any, name: str) -> dict[str, Any]:
     return value
 
 
-def _positive(value: float, name: str) -> None:
-    if value <= 0:
+def _positive(value: Any, name: str) -> None:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or value <= 0
+    ):
         raise ConfigError(f"'{name}' must be greater than zero")
+
+
+def _positive_integer(value: Any, name: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ConfigError(f"'{name}' must be a positive integer")
+
+
+def _construct[T](factory: type[T], raw: dict[str, Any], name: str) -> T:
+    try:
+        return factory(**raw)
+    except TypeError as error:
+        raise ConfigError(f"invalid '{name}': {error}") from error
 
 
 def _provider_config(value: Any, name: str, *, inherited_provider: str = "mock") -> ProviderConfig:
@@ -95,7 +115,7 @@ def load_config(path: str | Path) -> RunConfig:
         raise ConfigError("'input.path' is required")
 
     chunking_raw = _mapping(root.get("chunking"), "chunking")
-    chunking = ChunkingConfig(**chunking_raw)
+    chunking = _construct(ChunkingConfig, chunking_raw, "chunking")
 
     translation_raw = _mapping(root.get("translation"), "translation").copy()
     route_keys = {
@@ -122,7 +142,7 @@ def load_config(path: str | Path) -> RunConfig:
         route_raw["deny"] = languages.get("deny", [])
         route_raw["languages"] = []
     translation = _provider_config(translation_raw, "translation")
-    route = RouteConfig(**route_raw)
+    route = _construct(RouteConfig, route_raw, "translation route")
 
     generation_raw = _mapping(root.get("generation"), "generation").copy()
     temperature = generation_raw.pop("temperature", {})
@@ -155,6 +175,28 @@ def load_config(path: str | Path) -> RunConfig:
         parameters = {key: stage_raw.pop(key) for key in list(stage_raw) if key not in known}
         pipeline.append(PipelineStageConfig(type=stage_type, parameters=parameters, **stage_raw))
 
+    runtime_raw = _mapping(root.get("runtime"), "runtime").copy()
+    if "resume" in runtime_raw:
+        warnings.warn(
+            "'runtime.resume' is deprecated and will be removed in v1.0; "
+            "use the explicit resume command",
+            FutureWarning,
+            stacklevel=2,
+        )
+    budgets = _construct(
+        BudgetConfig,
+        _mapping(runtime_raw.pop("budgets", {}), "runtime.budgets"),
+        "runtime.budgets",
+    )
+    runtime = _construct(RuntimeConfig, {**runtime_raw, "budgets": budgets}, "runtime")
+    metrics_raw = _mapping(root.get("metrics"), "metrics").copy()
+    semantic = _construct(
+        SemanticMetricConfig,
+        _mapping(metrics_raw.pop("semantic", {}), "metrics.semantic"),
+        "metrics.semantic",
+    )
+    if metrics_raw:
+        raise ConfigError("invalid 'metrics': unexpected fields " + ", ".join(sorted(metrics_raw)))
     config = RunConfig(
         name=str(run["name"]),
         seed=int(run.get("seed", 0)),
@@ -167,9 +209,10 @@ def load_config(path: str | Path) -> RunConfig:
         translation=translation,
         generation=generation,
         route=route,
-        context=ContextConfig(**_mapping(root.get("context"), "context")),
-        memory=MemoryConfig(**_mapping(root.get("memory"), "memory")),
-        runtime=RuntimeConfig(**_mapping(root.get("runtime"), "runtime")),
+        context=_construct(ContextConfig, _mapping(root.get("context"), "context"), "context"),
+        memory=_construct(MemoryConfig, _mapping(root.get("memory"), "memory"), "memory"),
+        runtime=runtime,
+        metrics=MetricsConfig(semantic=semantic),
         pipeline=pipeline,
         temperatures=temperatures,
         custom_prompts={
@@ -188,8 +231,22 @@ def validate_config(config: RunConfig) -> None:
     route_modes = {"fixed", "random", "stratified", "hubbed", "mutating_fixed"}
     if config.route.mode not in route_modes:
         raise ConfigError(f"unknown route mode: {config.route.mode}")
-    _positive(config.chunking.max_chars, "chunking.max_chars")
-    _positive(config.runtime.retries, "runtime.retries")
+    _positive_integer(config.chunking.max_chars, "chunking.max_chars")
+    _positive_integer(config.chunking.target_chars, "chunking.target_chars")
+    _positive_integer(config.chunking.target_tokens, "chunking.target_tokens")
+    _positive_integer(config.chunking.sentence_window, "chunking.sentence_window")
+    if (
+        isinstance(config.chunking.paragraph_overlap, bool)
+        or not isinstance(config.chunking.paragraph_overlap, int)
+        or config.chunking.paragraph_overlap < 0
+    ):
+        raise ConfigError("'chunking.paragraph_overlap' must be a non-negative integer")
+    _positive_integer(config.runtime.retries, "runtime.retries")
+    rpm = config.runtime.requests_per_minute
+    if rpm is not None and (
+        isinstance(rpm, bool) or not isinstance(rpm, int) or rpm < 0
+    ):
+        raise ConfigError("'runtime.requests_per_minute' must be null or a non-negative integer")
     if (
         isinstance(config.runtime.concurrency, bool)
         or not isinstance(config.runtime.concurrency, int)
@@ -212,14 +269,39 @@ def validate_config(config: RunConfig) -> None:
             "intermediate_generations, or all_generated_text"
         )
     _positive(config.memory.half_life_chunks, "memory.half_life_chunks")
-    _positive(config.memory.maximum_items_in_prompt, "memory.maximum_items_in_prompt")
-    _positive(config.memory.minimum_count, "memory.minimum_count")
+    _positive_integer(
+        config.memory.maximum_items_in_prompt, "memory.maximum_items_in_prompt"
+    )
+    _positive_integer(config.memory.minimum_count, "memory.minimum_count")
+    _positive_integer(config.route.min_hops, "translation.min_hops")
+    _positive_integer(config.route.max_hops, "translation.max_hops")
     if config.route.min_hops > config.route.max_hops:
         raise ConfigError("'translation.min_hops' cannot exceed 'translation.max_hops'")
     if config.runtime.failure_policy not in {"stop", "skip", "fallback"}:
         raise ConfigError("'runtime.failure_policy' must be stop, skip, or fallback")
     if config.runtime.failure_policy == "fallback" and config.runtime.fallback_provider != "mock":
         raise ConfigError("the built-in fallback_provider currently supports only 'mock'")
+    for name, value in (
+        ("max_requests", config.runtime.budgets.max_requests),
+        ("max_total_tokens", config.runtime.budgets.max_total_tokens),
+    ):
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+        ):
+            raise ConfigError(f"'runtime.budgets.{name}' must be null or a non-negative integer")
+    cost = config.runtime.budgets.max_cost_usd
+    if cost is not None and (
+        isinstance(cost, bool) or not isinstance(cost, (int, float)) or cost < 0
+    ):
+        raise ConfigError(
+            "'runtime.budgets.max_cost_usd' must be null or a non-negative number"
+        )
+    semantic = config.metrics.semantic
+    if semantic.provider != "sentence_transformers":
+        raise ConfigError("'metrics.semantic.provider' must be sentence_transformers")
+    _positive_integer(semantic.batch_size, "metrics.semantic.batch_size")
+    _validate_provider(config.translation, "translation", translation=True)
+    _validate_provider(config.generation, "generation", translation=False)
     routing_modes = {
         "single_engine",
         "fixed_engine_route",
@@ -264,7 +346,7 @@ def validate_config(config: RunConfig) -> None:
     for stage in config.pipeline:
         if not 0 <= stage.probability <= 1:
             raise ConfigError(f"stage probability must be 0..1: {stage.type}")
-        _positive(stage.repeat, f"repeat for {stage.type}")
+        _positive_integer(stage.repeat, f"repeat for {stage.type}")
         if "max_length_ratio" in stage.parameters:
             _positive(
                 float(stage.parameters["max_length_ratio"]),
@@ -299,6 +381,61 @@ def validate_config(config: RunConfig) -> None:
                 )
         elif stage.type is StageType.TRANSLATION_CYCLE and stage.enabled and stage.probability == 1:
             guaranteed_translation = True
+
+
+def _validate_provider(config: ProviderConfig, name: str, *, translation: bool) -> None:
+    _positive(config.timeout_seconds, f"{name}.timeout_seconds")
+    supported = (
+        {
+            "mock",
+            "local",
+            "libretranslate",
+            "nllb",
+            "m2m100",
+            "opus",
+            "opus_mt",
+            "google_cloud",
+            "deepl",
+            "azure_translator",
+            "yandex_translate",
+            "commercial_nmt",
+        }
+        if translation
+        else {"mock", "openrouter", "openai_compatible"}
+    )
+    if not config.providers and config.provider not in supported:
+        raise ConfigError(f"unknown {name} provider: {config.provider}")
+    for key in ("max_input_tokens", "max_loaded_models", "retries", "max_tokens"):
+        if key in config.options:
+            _positive_integer(config.options[key], f"{name}.{key}")
+    if "retry_backoff_seconds" in config.options:
+        value = config.options["retry_backoff_seconds"]
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or value < 0
+        ):
+            raise ConfigError(f"'{name}.retry_backoff_seconds' must be non-negative")
+    for key in ("allow_downloads", "configured_pairs_only", "local_files_only"):
+        if key in config.options and not isinstance(config.options[key], bool):
+            raise ConfigError(f"'{name}.{key}' must be a boolean")
+    decoding = config.options.get("decoding")
+    if decoding is not None:
+        if not isinstance(decoding, dict):
+            raise ConfigError(f"'{name}.decoding' must be a mapping")
+        for key in ("num_beams", "max_new_tokens"):
+            if key in decoding:
+                _positive_integer(decoding[key], f"{name}.decoding.{key}")
+        if "no_repeat_ngram_size" in decoding:
+            value = decoding["no_repeat_ngram_size"]
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ConfigError(
+                    f"'{name}.decoding.no_repeat_ngram_size' must be non-negative"
+                )
+    for alias, provider in config.providers.items():
+        _validate_provider(provider, f"{name}.providers.{alias}", translation=translation)
+    for task, provider in config.tasks.items():
+        _validate_provider(provider, f"{name}.tasks.{task}", translation=translation)
 
 
 def resolve_input_path(config: RunConfig) -> Path:
@@ -345,9 +482,32 @@ def config_from_resolved(raw: dict[str, Any]) -> RunConfig:
         route=RouteConfig(**raw.get("route", {})),
         context=ContextConfig(**raw.get("context", {})),
         memory=MemoryConfig(**raw.get("memory", {})),
-        runtime=RuntimeConfig(**raw.get("runtime", {})),
+        runtime=_runtime_from_resolved(raw.get("runtime", {})),
+        metrics=_metrics_from_resolved(raw.get("metrics", {})),
         pipeline=stages,
         temperatures=dict(raw.get("temperatures", {})),
         custom_prompts=dict(raw.get("custom_prompts", {})),
         config_path=raw.get("config_path"),
     )
+
+
+def _runtime_from_resolved(raw: Any) -> RuntimeConfig:
+    value = _mapping(raw, "runtime").copy()
+    budgets = _construct(
+        BudgetConfig,
+        _mapping(value.pop("budgets", {}), "runtime.budgets"),
+        "runtime.budgets",
+    )
+    return _construct(RuntimeConfig, {**value, "budgets": budgets}, "runtime")
+
+
+def _metrics_from_resolved(raw: Any) -> MetricsConfig:
+    value = _mapping(raw, "metrics").copy()
+    semantic = _construct(
+        SemanticMetricConfig,
+        _mapping(value.pop("semantic", {}), "metrics.semantic"),
+        "metrics.semantic",
+    )
+    if value:
+        raise ConfigError("invalid 'metrics': unexpected fields " + ", ".join(sorted(value)))
+    return MetricsConfig(semantic=semantic)

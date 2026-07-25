@@ -31,6 +31,18 @@ class CheckpointStore:
             or data.get("checkpoint_reusable") is not True
         ):
             return None
+        details = data.get("translation_details", [])
+        if isinstance(details, list):
+            for detail in details:
+                if not isinstance(detail, dict) or "output_path" not in detail:
+                    continue
+                hop_path = self.directory / str(detail["output_path"])
+                if (
+                    not hop_path.exists()
+                    or detail.get("output_checksum")
+                    != checksum_text(hop_path.read_text(encoding="utf-8"))
+                ):
+                    return None
         data["output_text"] = output
         try:
             return StageResult(**data)
@@ -43,3 +55,15 @@ class CheckpointStore:
         payload: dict[str, Any] = result.to_dict()
         atomic_write_json(metadata_path, payload)
         return metadata_path, output_path
+
+    def save_hop_output(
+        self,
+        stage_number: int,
+        label: str,
+        hop_index: int,
+        text: str,
+    ) -> tuple[str, str]:
+        stem = f"stage-{stage_number:02d}-{label.replace('_', '-')}"
+        path = self.directory / f"{stem}-hop-{hop_index + 1:02d}-output.txt"
+        atomic_write_text(path, text)
+        return path.name, checksum_text(text)

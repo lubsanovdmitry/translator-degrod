@@ -7,6 +7,7 @@ from itertools import pairwise
 from typing import Any, cast
 
 from ..models import EngineRoutingConfig, TranslationResult
+from ..runtime import BudgetExceededError
 
 
 class TranslationProviderRouter:
@@ -138,7 +139,9 @@ class TranslationProviderRouter:
                         await provider.get_languages()
                         if not self._supports(provider, source, target):
                             raise ValueError("language pair is not advertised by the server")
-                except Exception as error:  # noqa: BLE001 - provider preflight boundary
+                except Exception as error:
+                    if isinstance(error, BudgetExceededError):
+                        raise
                     checked[key] = False
                     message = (
                         f"{name} unavailable for {source}->{target}: "
@@ -171,7 +174,9 @@ class TranslationProviderRouter:
             provider = self.providers[name]
             try:
                 result = await provider.translate(text, source_language, target_language, seed=seed)
-            except Exception as error:  # noqa: BLE001 - fallback intentionally crosses vendors
+            except Exception as error:
+                if isinstance(error, BudgetExceededError):
+                    raise
                 errors.append(f"{name}: {type(error).__name__}: {error}")
                 continue
             warnings = list(result.warnings)
@@ -183,6 +188,7 @@ class TranslationProviderRouter:
                 "provider_type": result.provider,
                 "category": getattr(provider, "category", "nmt"),
                 "candidate_order": candidates,
+                "fallback_attempts": errors,
             }
             return cast(
                 TranslationResult,

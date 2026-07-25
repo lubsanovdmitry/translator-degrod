@@ -48,9 +48,7 @@ runtime:
   concurrency: 1
   retries: 2
   retry_backoff_seconds: 0
-  resume: true
 """,
         encoding="utf-8",
     )
     return config
-

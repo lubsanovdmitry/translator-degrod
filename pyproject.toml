@@ -4,9 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "semantic-telephone"
-version = "0.1.0"
+version = "0.2.0"
 description = "Reproducible recursive translation experiments for prose"
 readme = "README.md"
+license = {file = "LICENSE"}
 requires-python = ">=3.12"
 dependencies = [
   "httpx>=0.27,<1",
@@ -22,11 +23,16 @@ local-mt = [
   "sentencepiece>=0.2,<1",
   "sacremoses>=0.1,<1",
 ]
+semantic-metrics = [
+  "sentence-transformers>=3,<6",
+]
 dev = [
+  "build>=1,<2",
   "pytest>=8,<9",
   "pytest-asyncio>=0.23,<1",
   "mypy>=1.10,<2",
   "ruff>=0.5,<1",
+  "pytest-socket>=0.7,<1",
   "types-PyYAML>=6.0,<7",
 ]
 
@@ -37,7 +43,11 @@ semantic-telephone = "semantic_telephone.cli:app"
 where = ["src"]
 
 [tool.setuptools.package-data]
-semantic_telephone = ["py.typed"]
+semantic_telephone = [
+  "py.typed",
+  "resources/prompts/*.txt",
+  "resources/profiles/*.yaml",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -54,11 +54,19 @@ variants:
     )
 
     directory = asyncio.run(run_matrix(matrix_path))
-    rows = read_json(directory / "summary.json")["runs"]
+    summary = read_json(directory / "summary.json")
+    rows = summary["runs"]
 
     assert maximum_active == 2
     assert [row["variant"] for row in rows] == ["slow-first", "fast-second"]
     assert rows[0]["run_directory"] != rows[1]["run_directory"]
+    assert rows[0]["translation_models"]
+    assert summary["aggregates"]
+    assert summary["paired_deltas"]
+    assert (directory / "aggregates.csv").exists()
+    assert "Provider and model breakdown" in (directory / "report.md").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_matrix_concurrency_must_be_positive_integer(
