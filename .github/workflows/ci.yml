@@ -17,7 +17,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
       - run: python -m pip install -e '.[dev]'
-      - run: pytest --disable-socket -q
+      - run: pytest
       - run: ruff check src tests
       - run: mypy
       - run: python -m compileall -q src tests

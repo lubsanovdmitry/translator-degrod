@@ -60,18 +60,25 @@ def init(
         "input.txt": "",
         "semantic-telephone.yaml": starter,
         "SEMANTIC_TELEPHONE.md": (
-            ("# Mock smoke test only\n\n" if mock_only else "# Semantic Telephone profile\n\n")
+            ("# Mock smoke test\n\n" if mock_only else "# Semantic Telephone\n\n")
             + (
-                "This starter checks the CLI and artifact pipeline; it does not perform "
-                "machine translation.\n\n"
+                "Этот профиль проверяет CLI, checkpoints и артефакты. "
+                "Он не выполняет машинный перевод.\n\n"
                 if mock_only
-                else "This profile uses real providers; review credentials and model downloads "
-                "before running it.\n\n"
+                else "Это реальный профиль. Перед запуском проверьте зависимости, "
+                "ключи API и доступность моделей.\n\n"
             )
-            +
-            "Put text in `input.txt`, then run:\n\n"
+            + "`semantic-telephone.yaml` — локальная копия встроенного профиля. "
+            "Её можно изменять.\n\n"
+            "Поместите текст в `input.txt`, затем выполните:\n\n"
             "```bash\nsemantic-telephone validate semantic-telephone.yaml\n"
-            "semantic-telephone run semantic-telephone.yaml\n```\n"
+            "semantic-telephone plan semantic-telephone.yaml\n"
+            + (
+                ""
+                if mock_only
+                else "semantic-telephone doctor semantic-telephone.yaml\n"
+            )
+            + "semantic-telephone run semantic-telephone.yaml\n```\n"
         ),
     }
     for name, content in files.items():
