@@ -195,6 +195,27 @@ semantic-telephone compare RUN_A RUN_B --output comparison.md
 semantic-telephone matrix MATRIX_CONFIG
 ```
 
+## Локальный Research Console
+
+Для настройки, планирования, запуска и просмотра экспериментов доступен
+локальный web-интерфейс:
+
+```bash
+semantic-telephone ui
+```
+
+Он открывается на `http://127.0.0.1:8765/`, не принимает подключения извне и
+использует те же `load_config`, `plan`, `doctor`, pipeline и артефакты, что и
+CLI. Профили из `configs/` доступны только для чтения; UI-drafts и снимки
+заданий сохраняются в `.semantic-telephone-ui/`.
+
+Перед реальным запуском интерфейс показывает маршруты, верхние оценки запросов,
+возможные загрузки и удалённые сервисы, а затем требует явного подтверждения.
+Mock-профили помечены как smoke tests, `commercial_baseline` — как недоступная
+интерфейсная заглушка. Ключи API в браузер не передаются.
+
+Подробности: [docs/ui.md](docs/ui.md).
+
 ## Resume
 
 Продолжение всегда задаётся отдельной командой:
@@ -264,4 +285,5 @@ API-ключи и LibreTranslate server.
 - [Профили и требования](docs/profiles.md)
 - [Конфигурация YAML](docs/configuration.md)
 - [Артефакты и resume](docs/artifacts.md)
+- [Локальный Research Console](docs/ui.md)
 - [История изменений](CHANGELOG.md)

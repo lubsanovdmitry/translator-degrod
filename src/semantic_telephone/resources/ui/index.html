@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Local research console for Semantic Telephone experiments">
+    <title>Semantic Telephone — Research Console</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <a class="brand" href="#" aria-label="Semantic Telephone home">
+          <span class="brand-mark" aria-hidden="true">
+            <span></span><span></span><span></span>
+          </span>
+          <span>
+            <strong>Semantic</strong>
+            <small>Telephone / Lab 02</small>
+          </span>
+        </a>
+
+        <nav class="nav" aria-label="Workspace">
+          <button class="nav-item active" data-view="studio">
+            <span class="nav-index">01</span>
+            <span><strong>Studio</strong><small>Configure an experiment</small></span>
+          </button>
+          <button class="nav-item" data-view="plan">
+            <span class="nav-index">02</span>
+            <span><strong>Plan</strong><small>Review routes & bounds</small></span>
+          </button>
+          <button class="nav-item" data-view="queue">
+            <span class="nav-index">03</span>
+            <span><strong>Queue</strong><small>Watch execution</small></span>
+            <span class="nav-count" id="queue-count">0</span>
+          </button>
+          <button class="nav-item" data-view="results">
+            <span class="nav-index">04</span>
+            <span><strong>Results</strong><small>Inspect & compare</small></span>
+          </button>
+        </nav>
+
+        <div class="sidebar-foot">
+          <div class="local-status"><i></i> localhost only</div>
+          <p>Credentials stay in your environment. This console never asks for API keys.</p>
+        </div>
+      </aside>
+
+      <main>
+        <header class="topbar">
+          <div>
+            <p class="eyebrow" id="view-eyebrow">Experiment workspace</p>
+            <h1 id="view-title">Configure a run</h1>
+          </div>
+          <div class="top-actions">
+            <span class="save-state" id="save-state">Unsaved session</span>
+            <button class="button quiet" id="save-draft">Save draft</button>
+            <button class="button primary" id="plan-top">Build plan <span>→</span></button>
+          </div>
+        </header>
+
+        <section class="view active" id="view-studio">
+          <div class="studio-grid">
+            <div class="work-column">
+              <section class="panel profile-panel">
+                <div class="section-head">
+                  <div><span>Profile</span><h2>Experiment foundation</h2></div>
+                  <span class="profile-badge" id="profile-badge">Loading</span>
+                </div>
+                <div class="profile-picker">
+                  <label>
+                    Base profile
+                    <select id="profile-select"></select>
+                  </label>
+                  <div>
+                    <div class="profile-note" id="profile-note"></div>
+                    <button class="text-button draft-delete" id="delete-draft" hidden>Delete this draft</button>
+                  </div>
+                </div>
+              </section>
+
+              <section class="panel">
+                <div class="section-head">
+                  <div><span>Input</span><h2>Source material</h2></div>
+                  <span class="counter" id="source-count">0 characters</span>
+                </div>
+                <textarea class="source-editor" id="source-text" spellcheck="true"
+                  placeholder="Paste the text that should travel through the language route…"></textarea>
+              </section>
+
+              <section class="panel guided-panel">
+                <div class="section-head">
+                  <div><span>Guided controls</span><h2>Run & route</h2></div>
+                  <button class="text-button" id="apply-guided">Apply to YAML</button>
+                </div>
+                <div class="field-grid">
+                  <label>Run name<input id="run-name" type="text"></label>
+                  <label>Seed<input id="run-seed" type="number" step="1"></label>
+                  <label>Source language<input id="source-language" type="text" maxlength="16"></label>
+                  <label>Target language<input id="target-language" type="text" maxlength="16"></label>
+                  <label>Route mode
+                    <select id="route-mode">
+                      <option value="fixed">Fixed</option>
+                      <option value="random">Random</option>
+                      <option value="stratified">Stratified</option>
+                      <option value="hubbed">Hubbed</option>
+                      <option value="mutating_fixed">Mutating fixed</option>
+                    </select>
+                  </label>
+                  <label class="span-2">Fixed languages
+                    <input id="route-languages" type="text" placeholder="ru, ka, en, de, ru">
+                  </label>
+                  <label>Chunk target<input id="chunk-target" type="number" min="1"></label>
+                  <label>Chunk maximum<input id="chunk-max" type="number" min="1"></label>
+                  <label>Concurrency<input id="concurrency" type="number" min="1"></label>
+                  <label>Requests / minute<input id="requests-minute" type="number" min="1"></label>
+                  <label>Retry attempts<input id="retries" type="number" min="1"></label>
+                  <label>Request budget<input id="budget-requests" type="number" min="1" placeholder="Unlimited"></label>
+                  <label>Token budget<input id="budget-tokens" type="number" min="1" placeholder="Unlimited"></label>
+                  <label>Cost budget, USD<input id="budget-cost" type="number" min="0" step="0.01" placeholder="Unlimited"></label>
+                </div>
+                <div class="toggle-row">
+                  <label class="toggle"><input id="context-enabled" type="checkbox"><span></span>Rolling context</label>
+                  <label class="toggle"><input id="memory-enabled" type="checkbox"><span></span>Inferred memory</label>
+                </div>
+                <div class="pipeline-head">
+                  <span>Pipeline stages</span>
+                  <button class="text-button" id="add-stage">+ Add stage</button>
+                </div>
+                <div class="pipeline-list" id="pipeline-list"></div>
+              </section>
+            </div>
+
+            <aside class="code-column">
+              <section class="panel yaml-panel">
+                <div class="section-head">
+                  <div><span>Advanced</span><h2>Resolved draft YAML</h2></div>
+                  <span class="validation-state" id="validation-state"><i></i> Not validated</span>
+                </div>
+                <div class="editor-wrap">
+                  <div class="editor-gutter" id="yaml-lines">1</div>
+                  <textarea id="yaml-editor" class="yaml-editor" spellcheck="false" aria-label="YAML configuration"></textarea>
+                </div>
+                <div class="yaml-actions">
+                  <button class="button quiet" id="format-yaml">Validate & format</button>
+                  <button class="button quiet" id="run-doctor">Run doctor</button>
+                </div>
+              </section>
+            </aside>
+          </div>
+        </section>
+
+        <section class="view" id="view-plan">
+          <div class="empty-state" id="plan-empty">
+            <span class="empty-orbit" aria-hidden="true"><i></i></span>
+            <p class="eyebrow">No plan yet</p>
+            <h2>Resolve the experiment before it runs.</h2>
+            <p>Planning is offline. It calculates chunks, seeded language routes, engine candidates, resources, and request bounds without downloading a model.</p>
+            <button class="button primary" id="plan-empty-button">Build plan</button>
+          </div>
+          <div id="plan-content" hidden>
+            <div class="metric-strip" id="plan-metrics"></div>
+            <div class="plan-layout">
+              <section class="panel">
+                <div class="section-head">
+                  <div><span>Seeded itinerary</span><h2>Language routes</h2></div>
+                  <span class="mono" id="plan-seed"></span>
+                </div>
+                <div class="route-list" id="route-list"></div>
+              </section>
+              <aside>
+                <section class="panel plan-side">
+                  <div class="section-head"><div><span>Runtime</span><h2>Resources</h2></div></div>
+                  <div id="resource-list" class="resource-list"></div>
+                </section>
+                <section class="panel warning-panel" id="warning-panel">
+                  <div class="section-head"><div><span>Preflight</span><h2>Review notes</h2></div></div>
+                  <div id="plan-warnings"></div>
+                </section>
+                <button class="button launch" id="review-launch">Review & launch <span>→</span></button>
+              </aside>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="view-queue">
+          <div class="queue-header">
+            <div><p class="eyebrow">Single-worker execution</p><h2>Experiment queue</h2></div>
+            <p>Runs execute FIFO to protect local RAM, VRAM, and provider rate limits.</p>
+          </div>
+          <div class="job-list" id="job-list"></div>
+        </section>
+
+        <section class="view" id="view-results">
+          <div class="results-layout">
+            <aside class="run-browser panel">
+              <div class="section-head"><div><span>Archive</span><h2>Recorded runs</h2></div></div>
+              <div class="run-list" id="run-list"></div>
+            </aside>
+            <div class="result-detail" id="result-detail">
+              <div class="empty-state compact">
+                <p class="eyebrow">No run selected</p>
+                <h2>Choose a recorded experiment.</h2>
+                <p>Completed and partial manifests remain inspectable, including interrupted runs.</p>
+              </div>
+            </div>
+          </div>
+          <section class="panel compare-panel">
+            <div class="section-head">
+              <div><span>Comparison</span><h2>Two-run text study</h2></div>
+              <button class="button quiet" id="compare-button">Compare</button>
+            </div>
+            <div class="compare-controls">
+              <select id="compare-left"></select>
+              <span>versus</span>
+              <select id="compare-right"></select>
+            </div>
+            <div id="compare-output"></div>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <div class="toast-stack" id="toasts" aria-live="polite"></div>
+
+    <dialog id="launch-dialog">
+      <form method="dialog" class="dialog-card">
+        <button class="dialog-close" value="cancel" aria-label="Close">×</button>
+        <p class="eyebrow">Explicit confirmation</p>
+        <h2>Launch this experiment?</h2>
+        <p id="launch-summary"></p>
+        <div class="confirm-grid" id="launch-facts"></div>
+        <div class="confirm-warning">
+          <strong>Execution can have external effects.</strong>
+          <span id="launch-warning">Configured providers may download model weights or call paid remote APIs.</span>
+        </div>
+        <div class="dialog-actions">
+          <button class="button quiet" value="cancel">Keep editing</button>
+          <button class="button primary" id="confirm-launch" value="default">Confirm launch</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="draft-dialog">
+      <form method="dialog" class="dialog-card small">
+        <button class="dialog-close" value="cancel" aria-label="Close">×</button>
+        <p class="eyebrow">Reusable configuration</p>
+        <h2>Save UI draft</h2>
+        <label>Draft name<input id="draft-name" type="text" maxlength="100"></label>
+        <p class="dialog-note">Repository profiles stay unchanged. Drafts are stored under <code>.semantic-telephone-ui/</code>.</p>
+        <div class="dialog-actions">
+          <button class="button quiet" value="cancel">Cancel</button>
+          <button class="button primary" id="confirm-draft" value="default">Save draft</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>

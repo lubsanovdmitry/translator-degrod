@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Add the local Semantic Telephone Research Console with guided/YAML
+  configuration, offline plan review, a cancellable FIFO run queue, artifact
+  inspection, and completed-run comparison.
+
 ## 0.2.0
 
 - Package built-in prompts and starter profiles.

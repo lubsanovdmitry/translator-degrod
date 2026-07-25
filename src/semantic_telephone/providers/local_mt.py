@@ -237,7 +237,7 @@ class _TransformerSeq2SeqProvider:
         if self.local_files_only:
             tokenizer_kwargs["local_files_only"] = True
         tokenizer_kwargs.update(self._tokenizer_load_kwargs(source_language))
-        self._tokenizer = AutoTokenizer.from_pretrained(  # type: ignore[no-untyped-call]
+        self._tokenizer = AutoTokenizer.from_pretrained(
             self.model_name, **tokenizer_kwargs
         )
         model_kwargs: dict[str, Any] = {}

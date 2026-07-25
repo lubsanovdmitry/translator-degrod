@@ -47,6 +47,9 @@ semantic_telephone = [
   "py.typed",
   "resources/prompts/*.txt",
   "resources/profiles/*.yaml",
+  "resources/ui/*.html",
+  "resources/ui/*.css",
+  "resources/ui/*.js",
 ]
 
 [tool.pytest.ini_options]
@@ -62,3 +65,8 @@ target-version = "py312"
 python_version = "3.12"
 strict = true
 packages = ["semantic_telephone"]
+
+[[tool.mypy.overrides]]
+module = ["torch.*", "transformers.*", "huggingface_hub.*"]
+ignore_missing_imports = true
+follow_imports = "skip"

@@ -154,6 +154,31 @@ def run(
 
 
 @app.command()
+def ui(
+    host: Annotated[str, typer.Option("--host")] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port", min=0, max=65535)] = 8765,
+    config_root: Annotated[Path, typer.Option("--config-root")] = Path("configs"),
+    run_root: Annotated[Path, typer.Option("--run-root")] = Path("runs"),
+    no_open: Annotated[bool, typer.Option("--no-open")] = False,
+) -> None:
+    """Serve the local Semantic Telephone Research Console."""
+    from .ui import UIError, serve_console
+
+    try:
+        serve_console(
+            project_root=Path.cwd(),
+            config_root=config_root,
+            run_root=run_root,
+            host=host,
+            port=port,
+            open_browser=not no_open,
+        )
+    except (UIError, OSError) as error:
+        typer.echo(f"UI failed: {error}", err=True)
+        raise typer.Exit(1) from error
+
+
+@app.command()
 def resume(
     run_directory: Annotated[Path, typer.Argument(exists=True, file_okay=False)],
     verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False,
